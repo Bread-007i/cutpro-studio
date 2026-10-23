@@ -1,0 +1,30 @@
+{
+  "name": "ตัดต่อโปร Studio — Video Editor",
+  "short_name": "ตัดต่อโปร",
+  "description": "แอปตัดต่อวิดีโอมืออาชีพในเครื่องคุณ: ไทม์ไลน์หลายแทร็ก เกรดสีระดับ DaVinci เส้นโค้ง RGB วีลสี Lift/Gamma/Gain ลุคส์สำเร็จรูป ผู้ช่วย AI และส่งออกวิดีโอได้จริง",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10",
+  "lang": "th",
+  "dir": "ltr",
+  "categories": ["video", "productivity", "utilities", "multimedia"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "เปิดโปรเจกต์ใหม่",
+      "short_name": "โปรเจกต์ใหม่",
+      "url": "/",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

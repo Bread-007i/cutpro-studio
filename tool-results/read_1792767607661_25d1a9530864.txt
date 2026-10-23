@@ -1,0 +1,675 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useRef, useState } from "react";
+     4→import {
+     5→  Clapperboard,
+     6→  FileAudio,
+     7→  FileVideo,
+     8→  Image as ImageIcon,
+     9→  Sparkles,
+    10→  Type,
+    11→  Upload,
+    12→  Wand2,
+    13→  Waves,
+    14→} from "lucide-react";
+    15→import { Button } from "@/components/ui/button";
+    16→import { Progress } from "@/components/ui/progress";
+    17→import { ScrollArea } from "@/components/ui/scroll-area";
+    18→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    19→import { toast } from "sonner";
+    20→import {
+    21→  blobToBase64,
+    22→  detectScenes,
+    23→  detectSilence,
+    24→  extractWav,
+    25→  splitTextForCaptions,
+    26→} from "@/lib/editor/analysis";
+    27→import { getClipTrackType, useEditor } from "@/lib/editor/store";
+    28→import type { ClipProps, MediaItem } from "@/lib/editor/types";
+    29→import { DEFAULT_PROPS, IMAGE_DEFAULT_DURATION } from "@/lib/editor/types";
+    30→import { formatTime, uid } from "@/lib/editor/utils";
+    31→
+    32→const FILTER_PRESETS: { name: string; props: Partial<ClipProps> }[] = [
+    33→  { name: "ดั้งเดิม", props: { brightness: 100, contrast: 100, saturation: 100, hue: 0, blur: 0, grayscale: 0, sepia: 0 } },
+    34→  { name: "สดใส", props: { brightness: 112, contrast: 106, saturation: 118, hue: 0, blur: 0, grayscale: 0, sepia: 0 } },
+    35→  { name: "ขาวดำ", props: { grayscale: 100, contrast: 112, brightness: 102, saturation: 100, hue: 0, blur: 0, sepia: 0 } },
+    36→  { name: "วินเทจ", props: { sepia: 45, contrast: 92, saturation: 82, brightness: 104, hue: 0, blur: 0, grayscale: 0 } },
+    37→  { name: "ฟิล์มเย็น", props: { hue: 12, saturation: 90, contrast: 110, brightness: 98, blur: 0, grayscale: 0, sepia: 0 } },
+    38→  { name: "อบอุ่น", props: { hue: 350, saturation: 115, brightness: 106, contrast: 98, blur: 0, grayscale: 0, sepia: 0 } },
+    39→  { name: "ดราม่า", props: { contrast: 128, saturation: 78, brightness: 94, grayscale: 12, hue: 0, blur: 0, sepia: 0 } },
+    40→  { name: "คมชัด", props: { contrast: 115, saturation: 108, brightness: 102, hue: 0, blur: 0, grayscale: 0, sepia: 0 } },
+    41→  { name: "ฝันหวาน", props: { brightness: 110, saturation: 90, blur: 1.5, contrast: 95, hue: 8, grayscale: 0, sepia: 0 } },
+    42→];
+    43→
+    44→const TEXT_PRESETS: { name: string; desc: string; props: Partial<ClipProps> }[] = [
+    45→  { name: "หัวข้อใหญ่", desc: "กลางจอ ตัวใหญ่", props: { text: "หัวข้อหลัก", fontSize: 96, fontWeight: 800, y: -0.05, textBg: 0 } },
+    46→  { name: "ซับไทเทิล", desc: "ล่างจอ พร้อมแถบดำ", props: { text: "ซับไทเทิล", fontSize: 44, fontWeight: 600, y: 0.38, textBg: 0.55 } },
+    47→  { name: "แคปชั่นกลาง", desc: "กลางจอ อ่านง่าย", props: { text: "แคปชั่น", fontSize: 56, fontWeight: 700, y: 0.1, textBg: 0.35 } },
+    48→  { name: "ป้ายมุมล่าง", desc: "เหมาะกับชื่อคน/สถานที่", props: { text: "ชื่อ-สถานที่", fontSize: 36, fontWeight: 600, y: 0.42, x: -0.28, align: "center", textBg: 0.45 } },
+    49→];
+    50→
+    51→type Prog = { active: boolean; label: string; value: number } | null;
+    52→
+    53→export default function MediaPanel() {
+    54→  const media = useEditor((s) => s.media);
+    55→  const selectedClipId = useEditor((s) => s.selectedClipId);
+    56→  const selectedClip = useEditor((s) => s.clips.find((c) => c.id === s.selectedClipId) ?? null);
+    57→  const fileInputRef = useRef<HTMLInputElement>(null);
+    58→  const [busy, setBusy] = useState<Prog>(null);
+    59→  const [dropHover, setDropHover] = useState(false);
+    60→
+    61→  // ---- import files -----------------------------------------------------------
+    62→
+    63→  const importFiles = useCallback(async (files: FileList | File[]) => {
+    64→    for (const file of Array.from(files)) {
+    65→      const type: MediaItem["type"] = file.type.startsWith("video")
+    66→        ? "video"
+    67→        : file.type.startsWith("audio")
+    68→          ? "audio"
+    69→          : file.type.startsWith("image")
+    70→            ? "image"
+    71→            : "video";
+    72→      if (!file.type.startsWith("video") && !file.type.startsWith("audio") && !file.type.startsWith("image")) {
+    73→        toast.error(`ไม่รองรับไฟล์ ${file.name}`);
+    74→        continue;
+    75→      }
+    76→      const url = URL.createObjectURL(file);
+    77→      const item: MediaItem = {
+    78→        id: uid(),
+    79→        name: file.name,
+    80→        type,
+    81→        url,
+    82→        file,
+    83→        duration: type === "image" ? IMAGE_DEFAULT_DURATION : 0,
+    84→        width: 0,
+    85→        height: 0,
+    86→      };
+    87→
+    88→      // probe metadata + thumbnail
+    89→      try {
+    90→        if (type === "image") {
+    91→          const img = new Image();
+    92→          img.src = url;
+    93→          await img.decode();
+    94→          item.width = img.naturalWidth;
+    95→          item.height = img.naturalHeight;
+    96→          item.thumbnail = makeThumbFromImage(img);
+    97→        } else {
+    98→          const el = document.createElement(type === "video" ? "video" : "audio");
+    99→          el.src = url;
+   100→          el.preload = "metadata";
+   101→          await new Promise<void>((resolve, reject) => {
+   102→            const to = setTimeout(() => resolve(), 8000);
+   103→            el.onloadedmetadata = () => {
+   104→              clearTimeout(to);
+   105→              resolve();
+   106→            };
+   107→            el.onerror = () => {
+   108→              clearTimeout(to);
+   109→              reject(new Error("โหลดไม่สำเร็จ"));
+   110→            };
+   111→          });
+   112→          item.duration = isFinite(el.duration) ? el.duration : 0;
+   113→          if (type === "video") {
+   114→            const v = el as HTMLVideoElement;
+   115→            item.width = v.videoWidth;
+   116→            item.height = v.videoHeight;
+   117→            item.thumbnail = await thumbFromVideo(v);
+   118→          }
+   119→        }
+   120→      } catch {
+   121→        toast.warning(`อ่านข้อมูล ${file.name} บางส่วนไม่สำเร็จ`);
+   122→      }
+   123→
+   124→      useEditor.getState().addMedia(item);
+   125→      toast.success(`นำเข้า ${file.name} แล้ว`);
+   126→    }
+   127→  }, []);
+   128→
+   129→  const onDrop = (e: React.DragEvent) => {
+   130→    e.preventDefault();
+   131→    setDropHover(false);
+   132→    if (e.dataTransfer.files.length) void importFiles(e.dataTransfer.files);
+   133→  };
+   134→
+   135→  // ---- demo project ------------------------------------------------------------
+   136→
+   137→  const loadDemo = async () => {
+   138→    // two gradient images + a tone audio so users (and tests) can try immediately
+   139→    const mk = async (c1: string, c2: string, label: string): Promise<MediaItem> => {
+   140→      const canvas = document.createElement("canvas");
+   141→      canvas.width = 1280;
+   142→      canvas.height = 720;
+   143→      const ctx = canvas.getContext("2d")!;
+   144→      const grad = ctx.createLinearGradient(0, 0, 1280, 720);
+   145→      grad.addColorStop(0, c1);
+   146→      grad.addColorStop(1, c2);
+   147→      ctx.fillStyle = grad;
+   148→      ctx.fillRect(0, 0, 1280, 720);
+   149→      ctx.fillStyle = "rgba(255,255,255,0.92)";
+   150→      ctx.font = "800 140px sans-serif";
+   151→      ctx.textAlign = "center";
+   152→      ctx.textBaseline = "middle";
+   153→      ctx.fillText(label, 640, 360);
+   154→      const blob = await new Promise<Blob>((r) => canvas.toBlob((b) => r(b!), "image/png"));
+   155→      const url = URL.createObjectURL(blob);
+   156→      const img = new Image();
+   157→      img.src = url;
+   158→      await img.decode();
+   159→      return {
+   160→        id: uid(),
+   161→        name: `ภาพตัวอย่าง ${label}.png`,
+   162→        type: "image",
+   163→        url,
+   164→        duration: IMAGE_DEFAULT_DURATION,
+   165→        width: 1280,
+   166→        height: 720,
+   167→        thumbnail: makeThumbFromImage(img),
+   168→      };
+   169→    };
+   170→
+   171→    const tone = async (): Promise<MediaItem> => {
+   172→      const sr = 44100;
+   173→      const len = sr * 6;
+   174→      const offline = new OfflineAudioContext(1, len, sr);
+   175→      const notes = [523.25, 659.25, 783.99, 659.25, 587.33, 523.25];
+   176→      notes.forEach((f, i) => {
+   177→        const osc = offline.createOscillator();
+   178→        const gain = offline.createGain();
+   179→        osc.type = "triangle";
+   180→        osc.frequency.value = f;
+   181→        const t0 = i;
+   182→        gain.gain.setValueAtTime(0.0001, t0);
+   183→        gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.05);
+   184→        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.95);
+   185→        osc.connect(gain);
+   186→        gain.connect(offline.destination);
+   187→        osc.start(t0);
+   188→        osc.stop(t0 + 1);
+   189→      });
+   190→      const buf = await offline.startRendering();
+   191→      // simple wav encode
+   192→      const wav = encodeWavLocal(buf);
+   193→      const blob = new Blob([wav], { type: "audio/wav" });
+   194→      return {
+   195→        id: uid(),
+   196→        name: "เสียงตัวอย่าง.wav",
+   197→        type: "audio",
+   198→        url: URL.createObjectURL(blob),
+   199→        duration: 6,
+   200→        width: 0,
+   201→        height: 0,
+   202→      };
+   203→    };
+   204→
+   205→    const s = useEditor.getState();
+   206→    const img1 = await mk("#7c3aed", "#db2777", "A");
+   207→    const img2 = await mk("#059669", "#0d9488", "B");
+   208→    const audio = await tone();
+   209→    s.addMedia(img1);
+   210→    s.addMedia(img2);
+   211→    s.addMedia(audio);
+   212→    s.addClipFromMedia(img1.id);
+   213→    s.addClipFromMedia(img2.id);
+   214→    s.addClipFromMedia(audio.id);
+   215→    s.addTextClip({ text: "ยินดีต้อนรับสู่ตัดต่อโปร", fontSize: 72, y: -0.3 }, 0.2);
+   216→    toast.success("โหลดโปรเจกต์ตัวอย่างแล้ว ลองกดเล่นได้เลย");
+   217→  };
+   218→
+   219→  // ---- smart tools -------------------------------------------------------------
+   220→
+   221→  const runSceneDetect = async () => {
+   222→    const s = useEditor.getState();
+   223→    const clip = s.clips.find((c) => c.id === s.selectedClipId);
+   224→    if (!clip || clip.kind !== "media") {
+   225→      toast.error("เลือกคลิปวิดีโอบนไทม์ไลน์ก่อน");
+   226→      return;
+   227→    }
+   228→    const m = s.media.find((mm) => mm.id === clip.mediaId);
+   229→    if (!m || m.type !== "video") {
+   230→      toast.error("ต้องเป็นคลิปวิดีโอเท่านั้น");
+   231→      return;
+   232→    }
+   233→    setBusy({ active: true, label: "กำลังวิเคราะห์ฉาก…", value: 0 });
+   234→    try {
+   235→      const cuts = await detectScenes(m.url, {
+   236→        onProgress: (p) => setBusy({ active: true, label: "กำลังวิเคราะห์ฉาก…", value: p * 100 }),
+   237→      });
+   238→      if (cuts.length === 0) {
+   239→        toast.info("ไม่พบจุดเปลี่ยนฉากที่ชัดเจน");
+   240→      } else {
+   241→        s.splitClipAtTimes(clip.id, cuts);
+   242→        toast.success(`พบ ${cuts.length} จุดเปลี่ยนฉาก แบ่งคลิปให้แล้ว`);
+   243→      }
+   244→    } catch (err) {
+   245→      toast.error(err instanceof Error ? err.message : "วิเคราะห์ไม่สำเร็จ");
+   246→    } finally {
+   247→      setBusy(null);
+   248→    }
+   249→  };
+   250→
+   251→  const runSilenceCut = async () => {
+   252→    const s = useEditor.getState();
+   253→    const clip = s.clips.find((c) => c.id === s.selectedClipId);
+   254→    if (!clip || clip.kind !== "media") {
+   255→      toast.error("เลือกคลิปที่มีเสียงบนไทม์ไลน์ก่อน");
+   256→      return;
+   257→    }
+   258→    const m = s.media.find((mm) => mm.id === clip.mediaId);
+   259→    if (!m?.file || m.type === "image") {
+   260→      toast.error("คลิปนี้ไม่มีไฟล์เสียง");
+   261→      return;
+   262→    }
+   263→    setBusy({ active: true, label: "กำลังหาช่วงเสียงเงียบ…", value: 0 });
+   264→    try {
+   265→      const regions = await detectSilence(m.file, {
+   266→        onProgress: (p) => setBusy({ active: true, label: "กำลังหาช่วงเสียงเงียบ…", value: p * 100 }),
+   267→      });
+   268→      if (regions.length === 0) {
+   269→        toast.info("ไม่พบช่วงเสียงเงียบที่ยาวพอ");
+   270→        return;
+   271→      }
+   272→      // build kept segments (inverse of silent regions)
+   273→      const srcDur = m.duration;
+   274→      const kept: { inPoint: number; duration: number }[] = [];
+   275→      let cursor = clip.inPoint;
+   276→      const clipEnd = clip.inPoint + clip.duration * clip.props.speed;
+   277→      for (const r of regions) {
+   278→        const rs = Math.max(clip.inPoint, r.start);
+   279→        const re = Math.min(clipEnd, r.end);
+   280→        if (re <= rs) continue;
+   281→        if (rs > cursor) kept.push({ inPoint: cursor, duration: rs - cursor });
+   282→        cursor = Math.max(cursor, re);
+   283→      }
+   284→      if (cursor < clipEnd) kept.push({ inPoint: cursor, duration: clipEnd - cursor });
+   285→      if (kept.length === 0) {
+   286→        toast.info("ทั้งคลิปเงียบหมด!");
+   287→        return;
+   288→      }
+   289→      const removed = regions.reduce((a, r) => a + (r.end - r.start), 0);
+   290→      s.replaceSegments(clip.id, kept);
+   291→      toast.success(`ตัดเสียงเงียบ ${regions.length} ช่วง ประหยัดไป ${removed.toFixed(1)} วินาที`);
+   292→    } catch (err) {
+   293→      toast.error(err instanceof Error ? err.message : "ตัดเสียงเงียบไม่สำเร็จ");
+   294→    } finally {
+   295→      setBusy(null);
+   296→    }
+   297→  };
+   298→
+   299→  const runAiCaptions = async () => {
+   300→    const s = useEditor.getState();
+   301→    const clip = s.clips.find((c) => c.id === s.selectedClipId);
+   302→    if (!clip || clip.kind !== "media") {
+   303→      toast.error("เลือกคลิปที่มีคนพูดบนไทม์ไลน์ก่อน");
+   304→      return;
+   305→    }
+   306→    const m = s.media.find((mm) => mm.id === clip.mediaId);
+   307→    if (!m?.file || m.type === "image") {
+   308→      toast.error("คลิปนี้ไม่มีเสียงพูด");
+   309→      return;
+   310→    }
+   311→    setBusy({ active: true, label: "กำลังเตรียมเสียง…", value: 10 });
+   312→    try {
+   313→      const wav = await extractWav(
+   314→        m.file,
+   315→        clip.inPoint,
+   316→        clip.duration * clip.props.speed,
+   317→        (p) => setBusy({ active: true, label: "กำลังเตรียมเสียง…", value: p * 40 })
+   318→      );
+   319→      if (wav.size > 22 * 1024 * 1024) {
+   320→        toast.error("คลิปยาวเกินไปสำหรับสร้างซับ AI (จำกัด ~10 นาที)");
+   321→        return;
+   322→      }
+   323→      setBusy({ active: true, label: "AI กำลังฟังเสียง…", value: 50 });
+   324→      const b64 = await blobToBase64(wav);
+   325→      const res = await fetch("/api/transcribe", {
+   326→        method: "POST",
+   327→        headers: { "Content-Type": "application/json" },
+   328→        body: JSON.stringify({ audio_base64: b64, name: m.name }),
+   329→      });
+   330→      const data = await res.json();
+   331→      if (!res.ok || !data.text) {
+   332→        throw new Error(data.error || "AI ถอดข้อความไม่สำเร็จ (อาจไม่มีเสียงพูดชัดเจน)");
+   333→      }
+   334→      setBusy({ active: true, label: "กำลังวางซับ…", value: 85 });
+   335→      const chunks = splitTextForCaptions(String(data.text), 34);
+   336→      if (chunks.length === 0) {
+   337→        toast.info("ไม่พบข้อความจากเสียงพูด");
+   338→        return;
+   339→      }
+   340→      // distribute captions across clip duration by char count
+   341→      const total = chunks.reduce((a, c) => a + c.length, 0);
+   342→      const dur = clip.duration;
+   343→      let t = clip.start;
+   344→      for (const ch of chunks) {
+   345→        const seg = (ch.length / total) * dur;
+   346→        const id = s.addTextClip(
+   347→          { text: ch, fontSize: 40, fontWeight: 600, y: 0.38, textBg: 0.55 },
+   348→          t,
+   349→          false
+   350→        );
+   351→        if (id) s.trimClip(id, "right", t + seg, false);
+   352→        t += seg;
+   353→      }
+   354→      toast.success(`สร้างซับ ${chunks.length} ชิ้นแล้ว`);
+   355→    } catch (err) {
+   356→      toast.error(err instanceof Error ? err.message : "สร้างซับไม่สำเร็จ");
+   357→    } finally {
+   358→      setBusy(null);
+   359→    }
+   360→  };
+   361→
+   362→  const applyFilterPreset = (props: Partial<ClipProps>) => {
+   363→    const s = useEditor.getState();
+   364→    if (!s.selectedClipId) {
+   365→      toast.error("เลือกคลิปบนไทม์ไลน์ก่อน");
+   366→      return;
+   367→    }
+   368→    s.updateClipProps(s.selectedClipId, props);
+   369→    toast.success("ใส่ฟิลเตอร์แล้ว");
+   370→  };
+   371→
+   372→  return (
+   373→    <div
+   374→      className={`flex h-full min-h-0 flex-col bg-zinc-900 ${dropHover ? "ring-2 ring-inset ring-violet-400" : ""}`}
+   375→      onDragOver={(e) => {
+   376→        e.preventDefault();
+   377→        setDropHover(true);
+   378→      }}
+   379→      onDragLeave={() => setDropHover(false)}
+   380→      onDrop={onDrop}
+   381→    >
+   382→      <Tabs defaultValue="media" className="flex h-full min-h-0 flex-col">
+   383→        <TabsList className="mx-2 mt-2 grid h-8 grid-cols-4 bg-zinc-800/80">
+   384→          <TabsTrigger value="media" className="h-6 gap-1 text-[11px]">
+   385→            <Clapperboard className="h-3 w-3" /> สื่อ
+   386→          </TabsTrigger>
+   387→          <TabsTrigger value="text" className="h-6 gap-1 text-[11px]">
+   388→            <Type className="h-3 w-3" /> ข้อความ
+   389→          </TabsTrigger>
+   390→          <TabsTrigger value="filters" className="h-6 gap-1 text-[11px]">
+   391→            <Wand2 className="h-3 w-3" /> ฟิลเตอร์
+   392→          </TabsTrigger>
+   393→          <TabsTrigger value="ai" className="h-6 gap-1 text-[11px]">
+   394→            <Sparkles className="h-3 w-3" /> AI
+   395→          </TabsTrigger>
+   396→        </TabsList>
+   397→
+   398→        <TabsContent value="media" className="mt-0 min-h-0 flex-1">
+   399→          <div className="flex h-full min-h-0 flex-col p-2">
+   400→            <input
+   401→              ref={fileInputRef}
+   402→              type="file"
+   403→              accept="video/*,audio/*,image/*"
+   404→              multiple
+   405→              className="hidden"
+   406→              onChange={(e) => {
+   407→                if (e.target.files) void importFiles(e.target.files);
+   408→                e.target.value = "";
+   409→              }}
+   410→            />
+   411→            <Button
+   412→              className="w-full bg-violet-600 text-white hover:bg-violet-500"
+   413→              onClick={() => fileInputRef.current?.click()}
+   414→            >
+   415→              <Upload className="mr-1.5 h-4 w-4" /> นำเข้าสื่อ
+   416→            </Button>
+   417→            <p className="mt-1.5 text-center text-[10px] text-zinc-500">
+   418→              ลากไฟล์มาวางที่นี่ได้ (วิดีโอ / เสียง / รูป)
+   419→            </p>
+   420→
+   421→            <ScrollArea className="mt-2 min-h-0 flex-1">
+   422→              {media.length === 0 ? (
+   423→                <div className="flex flex-col items-center justify-center rounded-md border border-dashed border-zinc-700 px-3 py-8 text-center">
+   424→                  <Upload className="mb-2 h-6 w-6 text-zinc-600" />
+   425→                  <p className="text-xs text-zinc-500">ยังไม่มีสื่อ</p>
+   426→                  <Button variant="outline" size="sm" className="mt-3 h-7 text-[11px] border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700" onClick={() => void loadDemo()}>
+   427→                    ใส่คลิปตัวอย่างให้ลองเล่น
+   428→                  </Button>
+   429→                </div>
+   430→              ) : (
+   431→                <ul className="space-y-1.5 pr-2">
+   432→                  {media.map((m) => (
+   433→                    <li
+   434→                      key={m.id}
+   435→                      className="group flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-800/50 p-1.5"
+   436→                    >
+   437→                      <div className="flex h-10 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-zinc-950">
+   438→                        {m.thumbnail ? (
+   439→                          <img src={m.thumbnail} alt={m.name} className="h-full w-full object-cover" />
+   440→                        ) : m.type === "audio" ? (
+   441→                          <FileAudio className="h-4 w-4 text-emerald-400" />
+   442→                        ) : (
+   443→                          <FileVideo className="h-4 w-4 text-violet-400" />
+   444→                        )}
+   445→                      </div>
+   446→                      <div className="min-w-0 flex-1">
+   447→                        <div className="truncate text-[11px] font-medium text-zinc-200" title={m.name}>
+   448→                          {m.name}
+   449→                        </div>
+   450→                        <div className="text-[10px] text-zinc-500">
+   451→                          {m.type === "image" ? "รูปภาพ" : formatTime(m.duration)} ·{" "}
+   452→                          {m.type === "video" ? "วิดีโอ" : m.type === "audio" ? "เสียง" : "รูป"}
+   453→                        </div>
+   454→                      </div>
+   455→                      <div className="flex shrink-0 flex-col gap-1">
+   456→                        <Button
+   457→                          size="sm"
+   458→                          className="h-6 px-1.5 text-[10px] bg-violet-600 text-white hover:bg-violet-500"
+   459→                          onClick={() => {
+   460→                            useEditor.getState().addClipFromMedia(m.id);
+   461→                            toast.success("เพิ่มลงไทม์ไลน์แล้ว");
+   462→                          }}
+   463→                        >
+   464→                          + ไทม์ไลน์
+   465→                        </Button>
+   466→                        <Button
+   467→                          size="sm"
+   468→                          variant="ghost"
+   469→                          className="h-6 px-1.5 text-[10px] text-zinc-500 hover:bg-zinc-800 hover:text-rose-300"
+   470→                          onClick={() => useEditor.getState().removeMedia(m.id)}
+   471→                        >
+   472→                          ลบ
+   473→                        </Button>
+   474→                      </div>
+   475→                    </li>
+   476→                  ))}
+   477→                </ul>
+   478→              )}
+   479→            </ScrollArea>
+   480→          </div>
+   481→        </TabsContent>
+   482→
+   483→        <TabsContent value="text" className="mt-0 min-h-0 flex-1">
+   484→          <ScrollArea className="h-full p-2">
+   485→            <p className="mb-2 px-1 text-[10px] leading-relaxed text-zinc-500">
+   486→              กดเพิ่มข้อความ — จะวางที่ตำแหน่งเคอร์เซอร์ แล้วปรับแก่/สี/ตำแหน่งได้ในแผงคุณสมบัติ
+   487→            </p>
+   488→            <div className="grid grid-cols-2 gap-2 pr-2">
+   489→              {TEXT_PRESETS.map((p) => (
+   490→                <button
+   491→                  key={p.name}
+   492→                  className="rounded-md border border-zinc-800 bg-zinc-800/50 p-2.5 text-left transition hover:border-violet-400/60 hover:bg-zinc-800"
+   493→                  onClick={() => {
+   494→                    useEditor.getState().addTextClip(p.props);
+   495→                    toast.success(`เพิ่ม "${p.name}" แล้ว`);
+   496→                  }}
+   497→                >
+   498→                  <div className="text-xs font-semibold text-zinc-100">{p.name}</div>
+   499→                  <div className="mt-0.5 text-[10px] text-zinc-500">{p.desc}</div>
+   500→                </button>
+   501→              ))}
+   502→            </div>
+   503→          </ScrollArea>
+   504→        </TabsContent>
+   505→
+   506→        <TabsContent value="filters" className="mt-0 min-h-0 flex-1">
+   507→          <ScrollArea className="h-full p-2">
+   508→            <p className="mb-2 px-1 text-[10px] leading-relaxed text-zinc-500">
+   509→              เลือกคลิปบนไทม์ไลน์ แล้วกดฟิลเตอร์ที่ต้องการ
+   510→            </p>
+   511→            <div className="grid grid-cols-3 gap-2 pr-2">
+   512→              {FILTER_PRESETS.map((f) => (
+   513→                <button
+   514→                  key={f.name}
+   515→                  className="group rounded-md border border-zinc-800 bg-zinc-800/50 p-1.5 transition hover:border-violet-400/60 hover:bg-zinc-800"
+   516→                  onClick={() => applyFilterPreset(f.props)}
+   517→                >
+   518→                  <div className="mb-1 flex h-10 items-center justify-center overflow-hidden rounded bg-zinc-950">
+   519→                    {selectedClip?.kind === "media" && media.find((m) => m.id === selectedClip.mediaId)?.thumbnail ? (
+   520→                      <img
+   521→                        src={media.find((m) => m.id === selectedClip.mediaId)!.thumbnail}
+   522→                        alt={f.name}
+   523→                        className="h-full w-full object-cover"
+   524→                        style={{
+   525→                          filter: `brightness(${f.props.brightness}%) contrast(${f.props.contrast}%) saturate(${f.props.saturation}%) hue-rotate(${f.props.hue ?? 0}deg) blur(${f.props.blur ?? 0}px) grayscale(${f.props.grayscale}%) sepia(${f.props.sepia}%)`,
+   526→                        }}
+   527→                      />
+   528→                    ) : (
+   529→                      <ImageIcon className="h-4 w-4 text-zinc-600" />
+   530→                    )}
+   531→                  </div>
+   532→                  <div className="text-center text-[10px] font-medium text-zinc-300">{f.name}</div>
+   533→                </button>
+   534→              ))}
+   535→            </div>
+   536→          </ScrollArea>
+   537→        </TabsContent>
+   538→
+   539→        <TabsContent value="ai" className="mt-0 min-h-0 flex-1">
+   540→          <ScrollArea className="h-full p-2">
+   541→            <div className="space-y-2 pr-2">
+   542→              <div className="rounded-md border border-violet-500/30 bg-violet-950/30 p-2.5">
+   543→                <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-violet-200">
+   544→                  <Sparkles className="h-3.5 w-3.5" /> ผู้ช่วยตัดต่อ AI
+   545→                </div>
+   546→                <p className="text-[10px] leading-relaxed text-violet-300/70">
+   547→                  เลือกคลิปบนไทม์ไลน์ แล้วใช้เครื่องมือด้านล่าง — AI จะช่วยตัดให้อัตโนมัติ
+   548→                </p>
+   549→              </div>
+   550→
+   551→              <button
+   552→                className="flex w-full items-start gap-2.5 rounded-md border border-zinc-800 bg-zinc-800/50 p-2.5 text-left transition hover:border-violet-400/60 hover:bg-zinc-800 disabled:opacity-50"
+   553→                onClick={() => void runSceneDetect()}
+   554→                disabled={!!busy}
+   555→              >
+   556→                <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+   557→                <div>
+   558→                  <div className="text-xs font-semibold text-zinc-100">แบ่งฉากอัตโนมัติ</div>
+   559→                  <div className="mt-0.5 text-[10px] text-zinc-500">ตรวจจับจุดเปลี่ยนฉากในวิดีโอ แล้วแบ่งคลิปให้ทั้งหมด</div>
+   560→                </div>
+   561→              </button>
+   562→
+   563→              <button
+   564→                className="flex w-full items-start gap-2.5 rounded-md border border-zinc-800 bg-zinc-800/50 p-2.5 text-left transition hover:border-violet-400/60 hover:bg-zinc-800 disabled:opacity-50"
+   565→                onClick={() => void runSilenceCut()}
+   566→                disabled={!!busy}
+   567→              >
+   568→                <Waves className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+   569→                <div>
+   570→                  <div className="text-xs font-semibold text-zinc-100">ตัดช่วงเสียงเงียบ</div>
+   571→                  <div className="mt-0.5 text-[10px] text-zinc-500">หาช่วงที่ไม่มีเสียงพูด แล้วตัดออกให้กระชับ เหมาะกับวลีตอนพักหายใจ</div>
+   572→                </div>
+   573→              </button>
+   574→
+   575→              <button
+   576→                className="flex w-full items-start gap-2.5 rounded-md border border-zinc-800 bg-zinc-800/50 p-2.5 text-left transition hover:border-violet-400/60 hover:bg-zinc-800 disabled:opacity-50"
+   577→                onClick={() => void runAiCaptions()}
+   578→                disabled={!!busy}
+   579→              >
+   580→                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+   581→                <div>
+   582→                  <div className="text-xs font-semibold text-zinc-100">สร้างซับ AI อัตโนมัติ</div>
+   583→                  <div className="mt-0.5 text-[10px] text-zinc-500">ถอดเสียงพูดเป็นข้อความ (รองรับไทย) แล้ววางเป็นซับไทเทิลตามจังหวะ</div>
+   584→                </div>
+   585→              </button>
+   586→
+   587→              {busy && (
+   588→                <div className="rounded-md border border-zinc-700 bg-zinc-800/80 p-2.5">
+   589→                  <div className="mb-1.5 text-[11px] font-medium text-zinc-200">{busy.label}</div>
+   590→                  <Progress value={busy.value} className="h-1.5" />
+   591→                </div>
+   592→              )}
+   593→            </div>
+   594→          </ScrollArea>
+   595→        </TabsContent>
+   596→      </Tabs>
+   597→    </div>
+   598→  );
+   599→}
+   600→
+   601→// ---- helpers ---------------------------------------------------------------
+   602→
+   603→function makeThumbFromImage(img: HTMLImageElement): string | undefined {
+   604→  try {
+   605→    const c = document.createElement("canvas");
+   606→    const scale = Math.min(1, 112 / Math.max(img.naturalWidth, img.naturalHeight));
+   607→    c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+   608→    c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+   609→    c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+   610→    return c.toDataURL("image/jpeg", 0.7);
+   611→  } catch {
+   612→    return undefined;
+   613→  }
+   614→}
+   615→
+   616→async function thumbFromVideo(v: HTMLVideoElement): Promise<string | undefined> {
+   617→  return new Promise((resolve) => {
+   618→    const done = () => {
+   619→      try {
+   620→        const c = document.createElement("canvas");
+   621→        const scale = Math.min(1, 112 / Math.max(v.videoWidth || 1, v.videoHeight || 1));
+   622→        c.width = Math.max(1, Math.round((v.videoWidth || 112) * scale));
+   623→        c.height = Math.max(1, Math.round((v.videoHeight || 63) * scale));
+   624→        c.getContext("2d")!.drawImage(v, 0, 0, c.width, c.height);
+   625→        resolve(c.toDataURL("image/jpeg", 0.7));
+   626→      } catch {
+   627→        resolve(undefined);
+   628→      }
+   629→    };
+   630→    if (v.readyState >= 2) {
+   631→      done();
+   632→    } else {
+   633→      v.currentTime = Math.min(1, (v.duration || 2) * 0.15);
+   634→      v.onseeked = done;
+   635→      setTimeout(done, 2500);
+   636→    }
+   637→  });
+   638→}
+   639→
+   640→function encodeWavLocal(buffer: AudioBuffer): ArrayBuffer {
+   641→  const numCh = buffer.numberOfChannels;
+   642→  const sr = buffer.sampleRate;
+   643→  const len = buffer.length;
+   644→  const bytes = len * numCh * 2;
+   645→  const ab = new ArrayBuffer(44 + bytes);
+   646→  const view = new DataView(ab);
+   647→  const writeStr = (off: number, s: string) => {
+   648→    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+   649→  };
+   650→  writeStr(0, "RIFF");
+   651→  view.setUint32(4, 36 + bytes, true);
+   652→  writeStr(8, "WAVE");
+   653→  writeStr(12, "fmt ");
+   654→  view.setUint32(16, 16, true);
+   655→  view.setUint16(20, 1, true);
+   656→  view.setUint16(22, numCh, true);
+   657→  view.setUint32(24, sr, true);
+   658→  view.setUint32(28, sr * numCh * 2, true);
+   659→  view.setUint16(32, numCh * 2, true);
+   660→  view.setUint16(34, 16, true);
+   661→  writeStr(36, "data");
+   662→  view.setUint32(40, bytes, true);
+   663→  const chans: Float32Array[] = [];
+   664→  for (let c = 0; c < numCh; c++) chans.push(buffer.getChannelData(c));
+   665→  let off = 44;
+   666→  for (let i = 0; i < len; i++) {
+   667→    for (let c = 0; c < numCh; c++) {
+   668→      const s = Math.max(-1, Math.min(1, chans[c][i]));
+   669→      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+   670→      off += 2;
+   671→    }
+   672→  }
+   673→  return ab;
+   674→}
+   675→
