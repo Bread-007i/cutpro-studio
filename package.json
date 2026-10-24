@@ -1,7 +1,7 @@
 {
   "name": "nextjs_tailwind_shadcn_ts",
-  "version": "0.2.3",
-  "releaseDate": "2026-10-23",
+  "version": "0.2.4",
+  "releaseDate": "2026-10-24",
   "description": "A professional desktop video editor with local project storage.",
   "private": true,
   "scripts": {
@@ -83,7 +83,6 @@
     "uuid": "^11.1.0",
     "vaul": "^1.1.2",
     "webm-duration-fix": "^1.0.4",
-    "z-ai-web-dev-sdk": "^0.0.18",
     "zod": "^4.0.2",
     "zustand": "^5.0.6"
   },

@@ -34,6 +34,8 @@ export interface EditorState {
   // clips
   addClipFromMedia: (mediaId: string, opts?: { trackId?: string; at?: number }) => string | null;
   addTextClip: (preset?: Partial<ClipProps>, at?: number, record?: boolean) => string | null;
+  addTimedTextClips: (items: { start: number; end: number; text: string }[]) => string[];
+  updateTimedTextClip: (id: string, item: { start: number; end: number; text: string }) => void;
   splitAtPlayhead: () => number;
   splitClipAtTimes: (clipId: string, mediaTimes: number[]) => void;
   deleteClip: (id: string, ripple?: boolean) => void;
@@ -244,6 +246,73 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (record) get().pushHistory();
     set((st) => ({ clips: [...st.clips, clip], selectedIds: [clip.id], selectedClipId: clip.id }));
     return clip.id;
+  },
+
+  addTimedTextClips: (items) => {
+    const s = get();
+    const textTrack = s.tracks.find((track) => track.type === "text");
+    if (!textTrack || items.length === 0) return [];
+    const validItems = items.filter(
+      (item) =>
+        Number.isFinite(item.start) &&
+        Number.isFinite(item.end) &&
+        item.start >= 0 &&
+        item.end > item.start &&
+        item.text.trim().length > 0
+    );
+    if (validItems.length === 0) return [];
+
+    const clips = validItems.map((item): Clip => ({
+      id: uid(),
+      trackId: textTrack.id,
+      kind: "text",
+      name: item.text.trim().slice(0, 24) || "ซับ",
+      start: item.start,
+      duration: item.end - item.start,
+      inPoint: 0,
+      props: {
+        ...DEFAULT_PROPS,
+        text: item.text.trim(),
+        fontSize: 40,
+        fontWeight: 600,
+        y: 0.38,
+        textBg: 0.55,
+      },
+    }));
+    s.pushHistory();
+    set((state) => ({
+      clips: [...state.clips, ...clips],
+      selectedIds: clips.slice(0, 1).map((clip) => clip.id),
+      selectedClipId: clips[0].id,
+    }));
+    return clips.map((clip) => clip.id);
+  },
+
+  updateTimedTextClip: (id, item) => {
+    const s = get();
+    const clip = s.clips.find((candidate) => candidate.id === id && candidate.kind === "text");
+    if (
+      !clip ||
+      !Number.isFinite(item.start) ||
+      !Number.isFinite(item.end) ||
+      item.start < 0 ||
+      item.end <= item.start ||
+      !item.text.trim()
+    ) return;
+    s.pushHistory();
+    set((state) => ({
+      clips: state.clips.map((candidate) =>
+        candidate.id === id
+          ? {
+              ...candidate,
+              name: item.text.trim().slice(0, 24) || "ซับ",
+              start: item.start,
+              duration: item.end - item.start,
+              props: { ...candidate.props, text: item.text.trim() },
+            }
+          : candidate
+      ),
+    }));
   },
 
   splitAtPlayhead: () => {

@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ตัดต่อโปร Studio — แอปตัดต่อวิดีโอมืออาชีพ",
   description:
-    "แอปตัดต่อวิดีโอที่ติดตั้งลงเดสก์ท็อปได้ ครบทั้งไทม์ไลน์หลายแทร็ก เกรดสีระดับมืออาชีพ (วีลสี Lift/Gamma/Gain เส้นโค้ง RGB ฮิสโตแกรม ลุคส์สำเร็จรูป) ผู้ช่วย AI แบ่งฉาก ตัดเสียงเงียบ สร้างซับอัตโนมัติ และส่งออกวิดีโอ ทำงานในเครื่อง ไม่ต้องอัปโหลดไฟล์",
+    "แอปตัดต่อวิดีโอที่ติดตั้งลงเดสก์ท็อปได้ ครบทั้งไทม์ไลน์หลายแทร็ก เกรดสีระดับมืออาชีพ และเครื่องมือสร้าง แก้ไข นำเข้า และส่งออกคำบรรยาย SRT",
   keywords: [
     "ตัดต่อวิดีโอ",
     "video editor",
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     "davinci resolve",
     "color grading",
     "timeline editor",
-    "AI video",
+    "SRT subtitles",
     "แอปตัดต่อ",
   ],
   applicationName: "ตัดต่อโปร Studio",

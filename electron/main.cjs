@@ -6,7 +6,6 @@ const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
-const { pathToFileURL } = require("node:url");
 
 const APP_ID = "com.cutpro.studio";
 const APP_TITLE = "CutPro Studio";
@@ -52,6 +51,7 @@ function getAppIconPath() {
 }
 
 function showSplash() {
+  const iconDataUrl = `data:image/png;base64,${fs.readFileSync(getAppIconPath()).toString("base64")}`;
   splash = new BrowserWindow({
     width: 430,
     height: 300,
@@ -74,7 +74,7 @@ function showSplash() {
     #percent{color:#e879f9;font-variant-numeric:tabular-nums} .track{height:6px;border-radius:9px;background:#27272a;overflow:hidden}
     #bar{height:100%;width:0;background:linear-gradient(90deg,#7c3aed,#d946ef);transition:width .25s ease}
     #error{display:none;margin-top:15px;color:#fda4af;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
-  </style><main><img class="logo" src="${pathToFileURL(getAppIconPath()).href}"><h1>${APP_TITLE}</h1><div class="row"><span id="message">กำลังเตรียมเปิดแอป…</span><span id="percent">0%</span></div><div class="track"><div id="bar"></div></div><div id="error"></div></main><script>
+  </style><main><img class="logo" src="${iconDataUrl}"><h1>${APP_TITLE}</h1><div class="row"><span id="message">กำลังเตรียมเปิดแอป…</span><span id="percent">0%</span></div><div class="track"><div id="bar"></div></div><div id="error"></div></main><script>
     window.updateProgress=(n,m)=>{document.getElementById("bar").style.width=n+"%";document.getElementById("percent").textContent=n+"%";document.getElementById("message").textContent=m};
     window.showError=(m)=>{document.getElementById("error").style.display="block";document.getElementById("error").textContent=m};
   </script></html>`;

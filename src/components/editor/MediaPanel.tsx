@@ -4,13 +4,12 @@ import { useCallback, useRef, useState } from "react";
 import {
   Clapperboard,
   FileAudio,
+  FileText,
   FileVideo,
   Image as ImageIcon,
-  Sparkles,
   Type,
   Upload,
   Wand2,
-  Waves,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,17 +19,9 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import {
-  blobToBase64,
-  detectScenes,
-  detectSilence,
-  extractWav,
-  splitTextForCaptions,
-} from "@/lib/editor/analysis";
 import { getClipTrackType, useEditor } from "@/lib/editor/store";
 import type { ClipProps, MediaItem } from "@/lib/editor/types";
 import { DEFAULT_PROPS, IMAGE_DEFAULT_DURATION } from "@/lib/editor/types";
@@ -38,6 +29,7 @@ import { formatTime, uid } from "@/lib/editor/utils";
 import { LOOKS, NEUTRAL_GRADE } from "@/lib/editor/color";
 import { loadImportedFont } from "@/lib/editor/fontManager";
 import { ensureFilmstrip } from "@/lib/editor/thumbCache";
+import SubtitlesPanel from "@/components/editor/SubtitlesPanel";
 
 const TEXT_PRESETS: { name: string; desc: string; props: Partial<ClipProps> }[] = [
   { name: "หัวข้อใหญ่", desc: "กลางจอ ตัวใหญ่", props: { text: "หัวข้อหลัก", fontSize: 96, fontWeight: 800, y: -0.05, textBg: 0 } },
@@ -68,15 +60,12 @@ function classifyImportFile(file: File): MediaItem["type"] | null {
   return mime.startsWith(`${type}/`) ? type : null;
 }
 
-type Prog = { active: boolean; label: string; value: number } | null;
-
 export default function MediaPanel() {
   const media = useEditor((s) => s.media);
   const selectedClipId = useEditor((s) => s.selectedClipId);
   const selectedClip = useEditor((s) => s.clips.find((c) => c.id === s.selectedClipId) ?? null);
   const fontInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState<Prog>(null);
   const [dropHover, setDropHover] = useState(false);
 
   // ---- import files -----------------------------------------------------------
@@ -252,149 +241,6 @@ export default function MediaPanel() {
     toast.success("โหลดโปรเจกต์ตัวอย่างแล้ว ลองกดเล่นได้เลย");
   };
 
-  // ---- smart tools -------------------------------------------------------------
-
-  const runSceneDetect = async () => {
-    const s = useEditor.getState();
-    const clip = s.clips.find((c) => c.id === s.selectedClipId);
-    if (!clip || clip.kind !== "media") {
-      toast.error("เลือกคลิปวิดีโอบนไทม์ไลน์ก่อน");
-      return;
-    }
-    const m = s.media.find((mm) => mm.id === clip.mediaId);
-    if (!m || m.type !== "video") {
-      toast.error("ต้องเป็นคลิปวิดีโอเท่านั้น");
-      return;
-    }
-    setBusy({ active: true, label: "กำลังวิเคราะห์ฉาก…", value: 0 });
-    try {
-      const cuts = await detectScenes(m.url, {
-        onProgress: (p) => setBusy({ active: true, label: "กำลังวิเคราะห์ฉาก…", value: p * 100 }),
-      });
-      if (cuts.length === 0) {
-        toast.info("ไม่พบจุดเปลี่ยนฉากที่ชัดเจน");
-      } else {
-        s.splitClipAtTimes(clip.id, cuts);
-        toast.success(`พบ ${cuts.length} จุดเปลี่ยนฉาก แบ่งคลิปให้แล้ว`);
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "วิเคราะห์ไม่สำเร็จ");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const runSilenceCut = async () => {
-    const s = useEditor.getState();
-    const clip = s.clips.find((c) => c.id === s.selectedClipId);
-    if (!clip || clip.kind !== "media") {
-      toast.error("เลือกคลิปที่มีเสียงบนไทม์ไลน์ก่อน");
-      return;
-    }
-    const m = s.media.find((mm) => mm.id === clip.mediaId);
-    if (!m?.file || m.type === "image") {
-      toast.error("คลิปนี้ไม่มีไฟล์เสียง");
-      return;
-    }
-    setBusy({ active: true, label: "กำลังหาช่วงเสียงเงียบ…", value: 0 });
-    try {
-      const regions = await detectSilence(m.file, {
-        onProgress: (p) => setBusy({ active: true, label: "กำลังหาช่วงเสียงเงียบ…", value: p * 100 }),
-      });
-      if (regions.length === 0) {
-        toast.info("ไม่พบช่วงเสียงเงียบที่ยาวพอ");
-        return;
-      }
-      // build kept segments (inverse of silent regions)
-      const srcDur = m.duration;
-      const kept: { inPoint: number; duration: number }[] = [];
-      let cursor = clip.inPoint;
-      const clipEnd = clip.inPoint + clip.duration * clip.props.speed;
-      for (const r of regions) {
-        const rs = Math.max(clip.inPoint, r.start);
-        const re = Math.min(clipEnd, r.end);
-        if (re <= rs) continue;
-        if (rs > cursor) kept.push({ inPoint: cursor, duration: rs - cursor });
-        cursor = Math.max(cursor, re);
-      }
-      if (cursor < clipEnd) kept.push({ inPoint: cursor, duration: clipEnd - cursor });
-      if (kept.length === 0) {
-        toast.info("ทั้งคลิปเงียบหมด!");
-        return;
-      }
-      const removed = regions.reduce((a, r) => a + (r.end - r.start), 0);
-      s.replaceSegments(clip.id, kept);
-      toast.success(`ตัดเสียงเงียบ ${regions.length} ช่วง ประหยัดไป ${removed.toFixed(1)} วินาที`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "ตัดเสียงเงียบไม่สำเร็จ");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const runAiCaptions = async () => {
-    const s = useEditor.getState();
-    const clip = s.clips.find((c) => c.id === s.selectedClipId);
-    if (!clip || clip.kind !== "media") {
-      toast.error("เลือกคลิปที่มีคนพูดบนไทม์ไลน์ก่อน");
-      return;
-    }
-    const m = s.media.find((mm) => mm.id === clip.mediaId);
-    if (!m?.file || m.type === "image") {
-      toast.error("คลิปนี้ไม่มีเสียงพูด");
-      return;
-    }
-    setBusy({ active: true, label: "กำลังเตรียมเสียง…", value: 10 });
-    try {
-      const wav = await extractWav(
-        m.file,
-        clip.inPoint,
-        clip.duration * clip.props.speed,
-        (p) => setBusy({ active: true, label: "กำลังเตรียมเสียง…", value: p * 40 })
-      );
-      if (wav.size > 22 * 1024 * 1024) {
-        toast.error("คลิปยาวเกินไปสำหรับสร้างซับ AI (จำกัด ~10 นาที)");
-        return;
-      }
-      setBusy({ active: true, label: "AI กำลังฟังเสียง…", value: 50 });
-      const b64 = await blobToBase64(wav);
-      const res = await fetch("/api/transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audio_base64: b64, name: m.name }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.text) {
-        throw new Error(data.error || "AI ถอดข้อความไม่สำเร็จ (อาจไม่มีเสียงพูดชัดเจน)");
-      }
-      setBusy({ active: true, label: "กำลังวางซับ…", value: 85 });
-      const chunks = splitTextForCaptions(String(data.text), 34);
-      if (chunks.length === 0) {
-        toast.info("ไม่พบข้อความจากเสียงพูด");
-        return;
-      }
-      // distribute captions across clip duration by char count
-      const total = chunks.reduce((a, c) => a + c.length, 0);
-      const dur = clip.duration;
-      let t = clip.start;
-      for (const ch of chunks) {
-        const seg = (ch.length / total) * dur;
-        const id = s.addTextClip(
-          { text: ch, fontSize: 40, fontWeight: 600, y: 0.38, textBg: 0.55 },
-          t,
-          false
-        );
-        if (id) s.trimClip(id, "right", t + seg, false);
-        t += seg;
-      }
-      toast.success(`สร้างซับ ${chunks.length} ชิ้นแล้ว`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "สร้างซับไม่สำเร็จ");
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const applyLook = (params: Partial<ClipProps>, name: string) => {
     const s = useEditor.getState();
     if (!s.selectedClipId) {
@@ -426,8 +272,8 @@ export default function MediaPanel() {
           <TabsTrigger value="filters" className="h-6 gap-1 text-[11px]">
             <Wand2 className="h-3 w-3" /> ลุคส์
           </TabsTrigger>
-          <TabsTrigger value="ai" className="h-6 gap-1 text-[11px]">
-            <Sparkles className="h-3 w-3" /> AI
+          <TabsTrigger value="subtitles" className="h-6 gap-1 text-[11px]">
+            <FileText className="h-3 w-3" /> SRT
           </TabsTrigger>
         </TabsList>
 
@@ -682,62 +528,8 @@ export default function MediaPanel() {
           </ScrollArea>
         </TabsContent>
 
-        <TabsContent value="ai" className="mt-0 min-h-0 flex-1">
-          <ScrollArea className="h-full p-2">
-            <div className="space-y-2 pr-2">
-              <div className="rounded-md border border-violet-500/30 bg-violet-950/30 p-2.5">
-                <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-violet-200">
-                  <Sparkles className="h-3.5 w-3.5" /> ผู้ช่วยตัดต่อ AI
-                </div>
-                <p className="text-[10px] leading-relaxed text-violet-300/70">
-                  เลือกคลิปบนไทม์ไลน์ แล้วใช้เครื่องมือด้านล่าง — AI จะช่วยตัดให้อัตโนมัติ
-                </p>
-              </div>
-
-              <button
-                className="flex w-full items-start gap-2.5 rounded-md border border-zinc-800 bg-zinc-800/50 p-2.5 text-left transition hover:border-violet-400/60 hover:bg-zinc-800 disabled:opacity-50"
-                onClick={() => void runSceneDetect()}
-                disabled={!!busy}
-              >
-                <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
-                <div>
-                  <div className="text-xs font-semibold text-zinc-100">แบ่งฉากอัตโนมัติ</div>
-                  <div className="mt-0.5 text-[10px] text-zinc-500">ตรวจจับจุดเปลี่ยนฉากในวิดีโอ แล้วแบ่งคลิปให้ทั้งหมด</div>
-                </div>
-              </button>
-
-              <button
-                className="flex w-full items-start gap-2.5 rounded-md border border-zinc-800 bg-zinc-800/50 p-2.5 text-left transition hover:border-violet-400/60 hover:bg-zinc-800 disabled:opacity-50"
-                onClick={() => void runSilenceCut()}
-                disabled={!!busy}
-              >
-                <Waves className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                <div>
-                  <div className="text-xs font-semibold text-zinc-100">ตัดช่วงเสียงเงียบ</div>
-                  <div className="mt-0.5 text-[10px] text-zinc-500">หาช่วงที่ไม่มีเสียงพูด แล้วตัดออกให้กระชับ เหมาะกับวลีตอนพักหายใจ</div>
-                </div>
-              </button>
-
-              <button
-                className="flex w-full items-start gap-2.5 rounded-md border border-zinc-800 bg-zinc-800/50 p-2.5 text-left transition hover:border-violet-400/60 hover:bg-zinc-800 disabled:opacity-50"
-                onClick={() => void runAiCaptions()}
-                disabled={!!busy}
-              >
-                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                <div>
-                  <div className="text-xs font-semibold text-zinc-100">สร้างซับ AI อัตโนมัติ</div>
-                  <div className="mt-0.5 text-[10px] text-zinc-500">ถอดเสียงพูดเป็นข้อความ (รองรับไทย) แล้ววางเป็นซับไทเทิลตามจังหวะ</div>
-                </div>
-              </button>
-
-              {busy && (
-                <div className="rounded-md border border-zinc-700 bg-zinc-800/80 p-2.5">
-                  <div className="mb-1.5 text-[11px] font-medium text-zinc-200">{busy.label}</div>
-                  <Progress value={busy.value} className="h-1.5" />
-                </div>
-              )}
-            </div>
-          </ScrollArea>
+        <TabsContent value="subtitles" className="mt-0 min-h-0 flex-1">
+          <SubtitlesPanel />
         </TabsContent>
       </Tabs>
     </div>
