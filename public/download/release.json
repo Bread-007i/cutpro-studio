@@ -1,8 +1,8 @@
 {
-  "version": "0.2.3",
-  "releaseDate": "2026-10-23",
-  "fileName": "CutPro-Studio-Setup-0.2.3-x64.exe",
-  "size": 241492482,
-  "sha256": "f16318943897e467000d65d2edfee2350ef52132439813014d0dd39073371938",
+  "version": "0.2.4",
+  "releaseDate": "2026-10-24",
+  "fileName": "CutPro-Studio-Setup-0.2.4-x64.exe",
+  "size": 241475183,
+  "sha256": "9e74b4bf772f1d29e47fedffe716d10e8ebbfe38dba002f3a420ab9eec4223d6",
   "platform": "Windows x64"
 }
