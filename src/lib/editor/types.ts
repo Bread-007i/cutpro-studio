@@ -1,6 +1,6 @@
 // Core types for the video editor
 
-export type MediaType = "video" | "audio" | "image";
+export type MediaType = "video" | "audio" | "image" | "font";
 export type TrackType = "video" | "audio" | "text";
 export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5";
 
@@ -75,6 +75,11 @@ export interface ClipProps {
   // text
   text: string;
   fontSize: number; // px @1080p reference
+  fontFamily: string; // imported font media ID, empty for the default stack
+  cropX: number; // normalized crop origin in the project frame
+  cropY: number;
+  cropWidth: number; // normalized crop size in the project frame
+  cropHeight: number;
   color: string;
   fontWeight: number;
   textBg: number; // background alpha 0..1
@@ -144,6 +149,11 @@ export const DEFAULT_PROPS: ClipProps = {
   fadeOut: 0,
   text: "ข้อความใหม่",
   fontSize: 56,
+  fontFamily: "",
+  cropX: 0,
+  cropY: 0,
+  cropWidth: 1,
+  cropHeight: 1,
   color: "#ffffff",
   fontWeight: 700,
   textBg: 0,

@@ -36,6 +36,7 @@ import type { ClipProps, MediaItem } from "@/lib/editor/types";
 import { DEFAULT_PROPS, IMAGE_DEFAULT_DURATION } from "@/lib/editor/types";
 import { formatTime, uid } from "@/lib/editor/utils";
 import { LOOKS, NEUTRAL_GRADE } from "@/lib/editor/color";
+import { loadImportedFont } from "@/lib/editor/fontManager";
 import { ensureFilmstrip } from "@/lib/editor/thumbCache";
 
 const TEXT_PRESETS: { name: string; desc: string; props: Partial<ClipProps> }[] = [
@@ -45,12 +46,35 @@ const TEXT_PRESETS: { name: string; desc: string; props: Partial<ClipProps> }[] 
   { name: "ป้ายมุมล่าง", desc: "เหมาะกับชื่อคน/สถานที่", props: { text: "ชื่อ-สถานที่", fontSize: 36, fontWeight: 600, y: 0.42, x: -0.28, align: "center", textBg: 0.45 } },
 ];
 
+const IMPORT_FORMATS = {
+  video: new Set(["mp4", "webm", "mov", "m4v", "ogv"]),
+  audio: new Set(["mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "opus"]),
+  image: new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"]),
+  font: new Set(["woff", "woff2", "ttf", "otf"]),
+} satisfies Record<MediaItem["type"], Set<string>>;
+
+function classifyImportFile(file: File): MediaItem["type"] | null {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const type = (Object.keys(IMPORT_FORMATS) as MediaItem["type"][])
+    .find((candidate) => IMPORT_FORMATS[candidate].has(extension));
+  if (!type) return null;
+
+  const mime = file.type.toLowerCase();
+  if (!mime || mime === "application/octet-stream") return type;
+  if (type === "font") {
+    return /^(font\/|application\/(font-woff2?|x-font-(woff2?|ttf|otf)|vnd\.ms-opentype))/.test(mime) ? type : null;
+  }
+  if (type === "audio" && mime === "application/ogg") return type;
+  return mime.startsWith(`${type}/`) ? type : null;
+}
+
 type Prog = { active: boolean; label: string; value: number } | null;
 
 export default function MediaPanel() {
   const media = useEditor((s) => s.media);
   const selectedClipId = useEditor((s) => s.selectedClipId);
   const selectedClip = useEditor((s) => s.clips.find((c) => c.id === s.selectedClipId) ?? null);
+  const fontInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<Prog>(null);
   const [dropHover, setDropHover] = useState(false);
@@ -59,15 +83,13 @@ export default function MediaPanel() {
 
   const importFiles = useCallback(async (files: FileList | File[]) => {
     for (const file of Array.from(files)) {
-      const type: MediaItem["type"] = file.type.startsWith("video")
-        ? "video"
-        : file.type.startsWith("audio")
-          ? "audio"
-          : file.type.startsWith("image")
-            ? "image"
-            : "video";
-      if (!file.type.startsWith("video") && !file.type.startsWith("audio") && !file.type.startsWith("image")) {
+      const type = classifyImportFile(file);
+      if (!type) {
         toast.error(`ไม่รองรับไฟล์ ${file.name}`);
+        continue;
+      }
+      if (type === "font" && file.size > 50 * 1024 * 1024) {
+        toast.error(`ไฟล์ฟอนต์ ${file.name} ใหญ่เกินไป (สูงสุด 50 MB)`);
         continue;
       }
       const url = URL.createObjectURL(file);
@@ -81,6 +103,20 @@ export default function MediaPanel() {
         width: 0,
         height: 0,
       };
+
+      if (type === "font") {
+        try {
+          await loadImportedFont(item.id, url);
+        } catch (error) {
+          URL.revokeObjectURL(url);
+          console.error("[media] font import failed", error);
+          toast.error(`อ่านไฟล์ฟอนต์ ${file.name} ไม่สำเร็จ`);
+          continue;
+        }
+        useEditor.getState().addMedia(item);
+        toast.success(`นำเข้าฟอนต์ ${file.name} แล้ว`);
+        continue;
+      }
 
       // probe metadata + thumbnail
       try {
@@ -400,7 +436,7 @@ export default function MediaPanel() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="video/*,audio/*,image/*"
+              accept=".mp4,.webm,.mov,.m4v,.ogv,.mp3,.wav,.ogg,.oga,.m4a,.aac,.flac,.opus,.png,.jpg,.jpeg,.webp,.gif,.bmp,.avif,.woff,.woff2,.ttf,.otf,video/mp4,video/webm,video/quicktime,audio/*,image/*,font/woff,font/woff2,font/ttf,font/otf"
               multiple
               className="hidden"
               onChange={(e) => {
@@ -415,7 +451,7 @@ export default function MediaPanel() {
               <Upload className="mr-1.5 h-4 w-4" /> นำเข้าสื่อ
             </Button>
             <p className="mt-1.5 text-center text-[10px] text-zinc-500">
-              ลากไฟล์มาวางที่นี่ได้ (วิดีโอ / เสียง / รูป)
+              วิดีโอ · เสียง · รูป · ฟอนต์ (MP4, WebM, MP3, WAV, PNG, JPG, WOFF2, TTF)
             </p>
 
             <ScrollArea className="mt-2 min-h-0 flex-1">
@@ -433,19 +469,25 @@ export default function MediaPanel() {
                     <ContextMenu key={m.id}>
                       <ContextMenuTrigger asChild>
                         <li
-                          draggable
+                          draggable={m.type !== "font"}
                           onDragStart={(e) => {
+                            if (m.type === "font") {
+                              e.preventDefault();
+                              return;
+                            }
                             e.dataTransfer.setData("text/cutpro-media", m.id);
                             e.dataTransfer.effectAllowed = "copy";
                           }}
-                          className="group flex cursor-grab items-center gap-2 rounded-md border border-zinc-800 bg-zinc-800/50 p-1.5 transition hover:border-violet-400/40 hover:bg-zinc-800"
-                          title="ลากลงไทม์ไลน์ได้เลย · คลิกขวาเพื่อเมนู"
+                          className={`group flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-800/50 p-1.5 transition hover:border-violet-400/40 hover:bg-zinc-800 ${m.type === "font" ? "" : "cursor-grab"}`}
+                          title={m.type === "font" ? "ฟอนต์ที่นำเข้า · เลือกใช้กับข้อความได้" : "ลากลงไทม์ไลน์ได้เลย · คลิกขวาเพื่อเมนู"}
                         >
                           <div className="flex h-10 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-zinc-950">
                             {m.thumbnail ? (
                               <img src={m.thumbnail} alt={m.name} className="h-full w-full object-cover" />
                             ) : m.type === "audio" ? (
                               <FileAudio className="h-4 w-4 text-emerald-400" />
+                            ) : m.type === "font" ? (
+                              <Type className="h-4 w-4 text-amber-300" />
                             ) : (
                               <FileVideo className="h-4 w-4 text-violet-400" />
                             )}
@@ -455,21 +497,39 @@ export default function MediaPanel() {
                               {m.name}
                             </div>
                             <div className="text-[10px] text-zinc-500">
-                              {m.type === "image" ? "รูปภาพ" : formatTime(m.duration)} ·{" "}
-                              {m.type === "video" ? "วิดีโอ" : m.type === "audio" ? "เสียง" : "รูป"}
+                              {m.type === "image" ? "รูปภาพ" : m.type === "font" ? "ฟอนต์" : formatTime(m.duration)} ·{" "}
+                              {m.type === "video" ? "วิดีโอ" : m.type === "audio" ? "เสียง" : m.type === "font" ? "ใช้กับข้อความ" : "รูป"}
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-col gap-1">
-                            <Button
-                              size="sm"
-                              className="h-6 px-1.5 text-[10px] bg-violet-600 text-white hover:bg-violet-500"
-                              onClick={() => {
-                                useEditor.getState().addClipFromMedia(m.id);
-                                toast.success("เพิ่มลงไทม์ไลน์แล้ว");
-                              }}
-                            >
-                              + ไทม์ไลน์
-                            </Button>
+                            {m.type === "font" ? (
+                              <Button
+                                size="sm"
+                                className="h-6 px-1.5 text-[10px] bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-50"
+                                disabled={selectedClip?.kind !== "text"}
+                                title={selectedClip?.kind === "text" ? "ใช้ฟอนต์กับข้อความที่เลือก" : "เลือกคลิปข้อความก่อน"}
+                                onClick={() => {
+                                  if (selectedClip?.kind !== "text") return;
+                                  const state = useEditor.getState();
+                                  state.pushHistory();
+                                  state.updateClipProps(selectedClip.id, { fontFamily: m.id });
+                                  toast.success(`ใช้ฟอนต์ ${m.name} แล้ว`);
+                                }}
+                              >
+                                ใช้กับข้อความ
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                className="h-6 px-1.5 text-[10px] bg-violet-600 text-white hover:bg-violet-500"
+                                onClick={() => {
+                                  useEditor.getState().addClipFromMedia(m.id);
+                                  toast.success("เพิ่มลงไทม์ไลน์แล้ว");
+                                }}
+                              >
+                                + ไทม์ไลน์
+                              </Button>
+                            )}
                             <Button
                               size="sm"
                               variant="ghost"
@@ -482,6 +542,21 @@ export default function MediaPanel() {
                         </li>
                       </ContextMenuTrigger>
                       <ContextMenuContent className="w-52">
+                        {m.type === "font" ? (
+                          <ContextMenuItem
+                            disabled={selectedClip?.kind !== "text"}
+                            onClick={() => {
+                              if (selectedClip?.kind !== "text") return;
+                              const state = useEditor.getState();
+                              state.pushHistory();
+                              state.updateClipProps(selectedClip.id, { fontFamily: m.id });
+                              toast.success(`ใช้ฟอนต์ ${m.name} แล้ว`);
+                            }}
+                          >
+                            ใช้กับข้อความที่เลือก
+                          </ContextMenuItem>
+                        ) : (
+                          <>
                         <ContextMenuItem
                           onClick={() => {
                             const s = useEditor.getState();
@@ -499,6 +574,8 @@ export default function MediaPanel() {
                         >
                           เพิ่มท้ายไทม์ไลน์
                         </ContextMenuItem>
+                          </>
+                        )}
                         <ContextMenuSeparator />
                         <ContextMenuItem
                           onClick={() => {
@@ -546,6 +623,29 @@ export default function MediaPanel() {
                   <div className="mt-0.5 text-[10px] text-zinc-500">{p.desc}</div>
                 </button>
               ))}
+            </div>
+            <div className="mt-4 rounded-lg border border-dashed border-zinc-700 p-3">
+              <input
+                ref={fontInputRef}
+                type="file"
+                accept=".woff,.woff2,.ttf,.otf,font/woff,font/woff2,font/ttf,font/otf"
+                className="hidden"
+                onChange={(event) => {
+                  if (event.target.files) void importFiles(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-full border-zinc-700 bg-zinc-800 text-[11px] text-zinc-200 hover:bg-zinc-700"
+                onClick={() => fontInputRef.current?.click()}
+              >
+                <Type className="mr-1.5 h-3.5 w-3.5" /> นำเข้าฟอนต์ WOFF / WOFF2 / TTF / OTF
+              </Button>
+              <p className="mt-1.5 text-center text-[10px] text-zinc-500">
+                นำเข้าจากไฟล์ในเครื่อง และเลือกฟอนต์ได้ที่แผงคุณสมบัติข้อความ
+              </p>
             </div>
           </ScrollArea>
         </TabsContent>

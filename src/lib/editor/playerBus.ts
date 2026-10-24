@@ -9,7 +9,8 @@ export interface ExportOptions {
 export interface PlayerControls {
   exportVideo: (
     opts: ExportOptions,
-    onProgress: (p: number) => void
+    onProgress: (p: number) => void,
+    signal: AbortSignal
   ) => Promise<Blob>;
   seekTo: (t: number) => void;
 }

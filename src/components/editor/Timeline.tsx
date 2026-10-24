@@ -46,7 +46,7 @@ import {
 } from "@/lib/editor/store";
 import type { Clip, MediaItem, Track } from "@/lib/editor/types";
 import { clamp, formatTime, formatTimeFull, niceStep } from "@/lib/editor/utils";
-import { copyGrade, hasGradeClipboard, isGraded, pasteGrade } from "@/lib/editor/color";
+import { copyGrade, hasGradeClipboard, isGraded, NEUTRAL_GRADE, pasteGrade } from "@/lib/editor/color";
 import { ensureFilmstrip, ensureWaveform, getFilmstrip, getWaveform, isWaveLoading, waveSlice } from "@/lib/editor/thumbCache";
 
 const TRACK_H = 56;
@@ -937,6 +937,11 @@ function ClipMenu({ clip }: { clip: Clip }) {
     const st = useEditor.getState();
     return idsForAction ?? st.selectedIds;
   };
+  const updatePropsWithHistory = (patch: Partial<Clip["props"]>) => {
+    const st = useEditor.getState();
+    st.pushHistory();
+    st.updateClipProps(clip.id, patch);
+  };
 
   return (
     <ContextMenuContent className="w-64">
@@ -991,7 +996,7 @@ function ClipMenu({ clip }: { clip: Clip }) {
         <>
           <ContextMenuItem
             onClick={() => {
-              useEditor.getState().updateClipProps(clip.id, { fadeIn: 1 });
+              updatePropsWithHistory({ fadeIn: 1 });
               toast.success("เฟดเข้า 1 วินาที");
             }}
           >
@@ -999,7 +1004,7 @@ function ClipMenu({ clip }: { clip: Clip }) {
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
-              useEditor.getState().updateClipProps(clip.id, { fadeOut: 1 });
+              updatePropsWithHistory({ fadeOut: 1 });
               toast.success("เฟดออก 1 วินาที");
             }}
           >
@@ -1007,14 +1012,14 @@ function ClipMenu({ clip }: { clip: Clip }) {
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
-              useEditor.getState().updateClipProps(clip.id, { muted: !clip.props.muted });
+              updatePropsWithHistory({ muted: !clip.props.muted });
             }}
           >
             {clip.props.muted ? "เปิดเสียงคลิปนี้" : "ปิดเสียงคลิปนี้"}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
-              useEditor.getState().updateClipProps(clip.id, { speed: clip.props.speed === 1 ? 1.5 : 1 });
+              updatePropsWithHistory({ speed: clip.props.speed === 1 ? 1.5 : 1 });
               toast.success(clip.props.speed === 1 ? "ความเร็ว 1.5×" : "กลับเป็น 1×");
             }}
           >
@@ -1038,7 +1043,7 @@ function ClipMenu({ clip }: { clip: Clip }) {
             onClick={() => {
               const g = pasteGrade();
               if (g) {
-                useEditor.getState().updateClipProps(clip.id, g);
+                updatePropsWithHistory(g);
                 toast.success("วางเกรดสีแล้ว");
               }
             }}
@@ -1048,12 +1053,7 @@ function ClipMenu({ clip }: { clip: Clip }) {
           <ContextMenuItem
             disabled={!isGraded(clip.props)}
             onClick={() => {
-              useEditor.getState().updateClipProps(clip.id, {
-                brightness: 100, contrast: 100, saturation: 100, hue: 0, grayscale: 0, sepia: 0,
-                liftM: 0, liftR: 0, liftG: 0, liftB: 0, gammaM: 0, gammaR: 0, gammaG: 0, gammaB: 0,
-                gainM: 0, gainR: 0, gainG: 0, gainB: 0, temp: 0, tint: 0, highlights: 0, shadows: 0,
-                fade: 0, vignette: 0, grain: 0, sharpen: 0, curves: null,
-              });
+              updatePropsWithHistory(NEUTRAL_GRADE);
               toast.success("รีเซ็ตเกรดสีแล้ว");
             }}
           >

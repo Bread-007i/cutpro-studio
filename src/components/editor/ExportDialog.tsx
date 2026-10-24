@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Download, Loader2, TriangleAlert } from "lucide-react";
+import { useRef, useState } from "react";
+import { Check, Download, Film, Loader2, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,7 +23,7 @@ import { playerBus } from "@/lib/editor/playerBus";
 import { getDuration, useEditor } from "@/lib/editor/store";
 import { downloadBlob, formatTime } from "@/lib/editor/utils";
 
-type Phase = "setup" | "recording" | "done";
+type Phase = "setup" | "recording" | "cancelling" | "done";
 
 export default function ExportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const duration = useEditor(getDuration);
@@ -34,6 +34,7 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
   const [progress, setProgress] = useState(0);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
+  const abortController = useRef<AbortController | null>(null);
 
   const bitrateMap: Record<string, number> = { high: 10_000_000, normal: 6_000_000, small: 3_000_000 };
 
@@ -43,12 +44,15 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
       toast.error("เครื่องเล่นยังไม่พร้อม");
       return;
     }
+    const controller = new AbortController();
+    abortController.current = controller;
     setPhase("recording");
     setProgress(0);
     try {
       const blob = await controls.exportVideo(
         { scale: Number(scale), fps: Number(fps), bitrate: bitrateMap[quality] },
-        (p) => setProgress(p * 100)
+        (p) => setProgress(p * 100),
+        controller.signal
       );
       setResultBlob(blob);
       const url = URL.createObjectURL(blob);
@@ -56,15 +60,20 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
       setPhase("done");
       toast.success("ส่งออกวิดีโอสำเร็จ!");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "ส่งออกไม่สำเร็จ");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        toast.info("ยกเลิกการส่งออกแล้ว");
+      } else {
+        toast.error(err instanceof Error ? err.message : "ส่งออกไม่สำเร็จ");
+      }
       setPhase("setup");
+    } finally {
+      if (abortController.current === controller) abortController.current = null;
     }
   };
 
   const close = (v: boolean) => {
     if (phase === "recording") {
-      toast.warning("กำลังบันทึกวิดีโอ กรุณารอจนเสร็จ");
-      return;
+      abortController.current?.abort();
     }
     onOpenChange(v);
     if (!v) {
@@ -80,21 +89,24 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="border-white/10 bg-[#14141c] text-zinc-100 sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-base">ส่งออกวิดีโอ</DialogTitle>
-          <DialogDescription className="text-xs text-zinc-500">
-            เรนเดอร์แบบเรียลไทม์จากพรีวิว ระหว่างส่งออกจะเห็นภาพเล่นผ่านอัตโนมัติ
+      <DialogContent className="gap-5 rounded-2xl border-white/10 bg-[#14141b] p-6 text-zinc-100 shadow-2xl sm:max-w-lg">
+        <DialogHeader className="gap-2 pr-7">
+          <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl border border-violet-200/15 bg-violet-300/10 text-violet-200">
+            {phase === "done" ? <Check className="h-5 w-5" /> : <Film className="h-5 w-5" />}
+          </div>
+          <DialogTitle className="text-lg font-semibold tracking-tight">ส่งออกวิดีโอ</DialogTitle>
+          <DialogDescription className="text-xs leading-relaxed text-zinc-400">
+            ตั้งค่าคุณภาพและบันทึกไฟล์วิดีโอลงในเครื่อง
           </DialogDescription>
         </DialogHeader>
 
         {phase === "setup" && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="mb-1 block text-[11px] text-zinc-400">ความละเอียด</label>
                 <Select value={scale} onValueChange={setScale}>
-                  <SelectTrigger className="h-8 border-white/10 bg-white/[0.06] text-xs">
+                  <SelectTrigger className="h-9 border-white/10 bg-white/[0.035] text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -107,7 +119,7 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
               <div>
                 <label className="mb-1 block text-[11px] text-zinc-400">เฟรมเรต</label>
                 <Select value={fps} onValueChange={setFps}>
-                  <SelectTrigger className="h-8 border-white/10 bg-white/[0.06] text-xs">
+                  <SelectTrigger className="h-9 border-white/10 bg-white/[0.035] text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -120,7 +132,7 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
               <div>
                 <label className="mb-1 block text-[11px] text-zinc-400">คุณภาพ</label>
                 <Select value={quality} onValueChange={setQuality}>
-                  <SelectTrigger className="h-8 border-white/10 bg-white/[0.06] text-xs">
+                  <SelectTrigger className="h-9 border-white/10 bg-white/[0.035] text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -132,26 +144,24 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
               </div>
             </div>
 
-            <div className="rounded-md border border-white/[0.07] bg-white/[0.03] p-2.5 text-[11px] text-zinc-400">
+            <div className="rounded-xl border border-white/[0.07] bg-black/15 p-3.5 text-xs text-zinc-400">
               <div className="flex justify-between">
                 <span>ความยาว</span>
-                <span className="font-mono text-zinc-200">{formatTime(duration)}</span>
+                <span className="font-mono tabular-nums text-zinc-200">{formatTime(duration)}</span>
               </div>
               <div className="mt-1 flex justify-between">
                 <span>ขนาดไฟล์โดยประมาณ</span>
-                <span className="font-mono text-zinc-200">~{estSize.toFixed(1)} MB (WebM)</span>
+                <span className="font-mono tabular-nums text-zinc-200">~{estSize.toFixed(1)} MB (WebM)</span>
               </div>
             </div>
 
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-950/30 p-2.5 text-[11px] text-amber-200/90">
-              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>
-                การส่งออกใช้เวลาเท่ากับความยาววิดีโอ (เรียลไทม์) ห้ามสลับ/ปิดแท็บนี้ระหว่างบันทึก
-              </span>
+            <div className="flex items-start gap-2.5 rounded-xl border border-violet-200/10 bg-violet-200/[0.04] p-3 text-[11px] leading-relaxed text-zinc-300">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-200" />
+              <span>ส่งออกตามความยาววิดีโอ ระบบจะคงความละเอียดและสัดส่วนของโปรเจกต์ไว้</span>
             </div>
 
             <Button
-              className="w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:from-violet-500 hover:to-fuchsia-500"
+              className="h-10 w-full bg-violet-200 text-[#17131f] hover:bg-violet-100"
               disabled={duration <= 0}
               onClick={() => void start()}
             >
@@ -162,27 +172,47 @@ export default function ExportDialog({ open, onOpenChange }: { open: boolean; on
         )}
 
         {phase === "recording" && (
-          <div className="space-y-3 py-2">
-            <div className="flex items-center gap-2 text-sm text-zinc-200">
-              <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
-              กำลังบันทึก… {Math.round(progress)}%
+          <div className="space-y-5 py-1">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2.5 text-sm text-zinc-200">
+                <Loader2 className="h-4 w-4 animate-spin text-violet-200" />
+                กำลังส่งออกวิดีโอ
+              </div>
+              <span className="font-mono text-xs tabular-nums text-violet-200">{Math.round(progress)}%</span>
             </div>
-            <Progress value={progress} className="h-2" />
-            <p className="text-[11px] text-zinc-500">
-              ห้ามสลับแท็บหรือย่อหน้าต่าง เพราะเบราว์เซอร์จะลดความเร็วการเรนเดอร์
-            </p>
+            <Progress value={progress} className="h-2 bg-white/10 [&_[data-slot=progress-indicator]]:bg-violet-200" />
+            <div className="rounded-xl border border-white/[0.07] bg-black/15 p-3 text-[11px] leading-relaxed text-zinc-400">
+              เหลืออีกประมาณ {formatTime(duration * Math.max(0, 1 - progress / 100))}
+            </div>
+            <Button
+              variant="outline"
+              className="h-10 w-full border-rose-200/20 bg-rose-200/[0.04] text-rose-100 hover:bg-rose-200/10"
+              onClick={() => {
+                setPhase("cancelling");
+                abortController.current?.abort();
+              }}
+            >
+              <X className="mr-1.5 h-4 w-4" /> ยกเลิกการส่งออก
+            </Button>
+          </div>
+        )}
+
+        {phase === "cancelling" && (
+          <div className="flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-black/15 p-4 text-sm text-zinc-300">
+            <Loader2 className="h-4 w-4 animate-spin text-violet-200" />
+            กำลังหยุดและคืนทรัพยากร…
           </div>
         )}
 
         {phase === "done" && resultUrl && (
-          <div className="space-y-3">
-            <video src={resultUrl} controls className="w-full rounded-md border border-white/10" />
-            <div className="flex items-center justify-between text-[11px] text-zinc-400">
-              <span>เสร็จสิ้น</span>
-              <span className="font-mono">{resultBlob ? (resultBlob.size / 1024 / 1024).toFixed(1) : "?"} MB</span>
+          <div className="space-y-4">
+            <video src={resultUrl} controls className="w-full rounded-xl border border-white/10 bg-black" />
+            <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-black/15 p-3 text-xs text-zinc-400">
+              <span className="inline-flex items-center gap-2 text-zinc-200"><Check className="h-4 w-4 text-violet-200" /> พร้อมบันทึก</span>
+              <span className="font-mono tabular-nums">{resultBlob ? (resultBlob.size / 1024 / 1024).toFixed(1) : "?"} MB</span>
             </div>
             <Button
-              className="w-full bg-emerald-600 text-white hover:bg-emerald-500"
+              className="h-10 w-full bg-violet-200 text-[#17131f] hover:bg-violet-100"
               onClick={() => {
                 if (resultBlob) downloadBlob(resultBlob, `cutpro-${Date.now()}.webm`);
               }}

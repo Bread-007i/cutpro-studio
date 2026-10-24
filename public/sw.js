@@ -1,7 +1,7 @@
 /* CutPro Studio service worker — offline-capable app shell.
    Strategy: icons/manifest/logo → cache-first; JS/CSS chunks & navigations →
    network-first with cache fallback (fresh in dev, offline-capable in prod). */
-const VERSION = "cutpro-v3";
+const VERSION = "cutpro-v4";
 const CORE = [
   "/",
   "/manifest.webmanifest",

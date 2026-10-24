@@ -63,7 +63,8 @@ export default function PwaProvider() {
             return true;
           }
           return false;
-        } catch {
+        } catch (error) {
+          console.error("[pwa] install prompt failed", error);
           return false;
         }
       },

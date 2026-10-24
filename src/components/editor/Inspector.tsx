@@ -70,8 +70,8 @@ export default function Inspector() {
     <ScrollArea className="h-full">
       <div className="p-3">
         <ClipInfo clip={selectedClip} clipType={clipType} />
+        {hasVisual && <TransformSection clip={selectedClip} />}
         {selectedClip.kind === "text" && <TextSection clip={selectedClip} />}
-        {hasVisual && selectedClip.kind === "media" && <TransformSection clip={selectedClip} />}
         {selectedClip.kind === "media" && clipType === "video" && <ColorSection clip={selectedClip} />}
         {hasAudio && <AudioSection clip={selectedClip} />}
       </div>
@@ -139,6 +139,35 @@ function Row({
       </div>
       {children}
     </div>
+  );
+}
+
+function RgbSlider({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+  onBegin,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+  onBegin: () => void;
+}) {
+  return (
+    <Row label={label} value={value.toFixed(3)}>
+      <Slider
+        value={[value]}
+        min={min}
+        max={max}
+        step={0.005}
+        onPointerDown={onBegin}
+        onValueChange={([next]) => onChange(next)}
+      />
+    </Row>
   );
 }
 
@@ -219,7 +248,7 @@ function TransformSection({ clip }: { clip: Clip }) {
         <Slider
           value={[p.scale]}
           min={0.1}
-          max={3}
+          max={10}
           step={0.01}
           onValueChange={([v]) => set({ scale: v })}
         />
@@ -260,39 +289,43 @@ function TransformSection({ clip }: { clip: Clip }) {
           onValueChange={([v]) => set({ opacity: v })}
         />
       </Row>
-      <Row label="การวางภาพ">
-        <Select value={p.fit} onValueChange={(v) => set({ fit: v as "contain" | "cover" })}>
-          <SelectTrigger className="h-7 border-white/10 bg-white/[0.05] text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="contain">ใส่ทั้งภาพ (มีขอบดำ)</SelectItem>
-            <SelectItem value="cover">เต็มจอ (ตัดบางส่วน)</SelectItem>
-          </SelectContent>
-        </Select>
-      </Row>
-      <Row label="ความเร็ว" value={`${p.speed}×`}>
-        <Slider
-          value={[p.speed]}
-          min={0.25}
-          max={4}
-          step={0.05}
-          onValueChange={([v]) => set({ speed: v })}
-        />
-      </Row>
-      <div className="flex gap-1">
-        {[0.5, 1, 1.5, 2, 4].map((s) => (
-          <Button
-            key={s}
-            size="sm"
-            variant={p.speed === s ? "secondary" : "ghost"}
-            className={`h-6 flex-1 px-0 text-[10px] ${p.speed === s ? "bg-violet-600/40 text-violet-100" : "text-zinc-400 hover:bg-white/10"}`}
-            onClick={() => set({ speed: s })}
-          >
-            {s}×
-          </Button>
-        ))}
-      </div>
+      {clip.kind === "media" && (
+        <>
+          <Row label="การวางภาพ">
+            <Select value={p.fit} onValueChange={(v) => set({ fit: v as "contain" | "cover" })}>
+              <SelectTrigger className="h-7 border-white/10 bg-white/[0.05] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="contain">ใส่ทั้งภาพ (มีขอบดำ)</SelectItem>
+                <SelectItem value="cover">เต็มจอ (ตัดบางส่วน)</SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
+          <Row label="ความเร็ว" value={`${p.speed}×`}>
+            <Slider
+              value={[p.speed]}
+              min={0.25}
+              max={4}
+              step={0.05}
+              onValueChange={([v]) => set({ speed: v })}
+            />
+          </Row>
+          <div className="flex gap-1">
+            {[0.5, 1, 1.5, 2, 4].map((s) => (
+              <Button
+                key={s}
+                size="sm"
+                variant={p.speed === s ? "secondary" : "ghost"}
+                className={`h-6 flex-1 px-0 text-[10px] ${p.speed === s ? "bg-violet-600/40 text-violet-100" : "text-zinc-400 hover:bg-white/10"}`}
+                onClick={() => set({ speed: s })}
+              >
+                {s}×
+              </Button>
+            ))}
+          </div>
+        </>
+      )}
     </Panel>
   );
 }
@@ -413,6 +446,38 @@ function ColorSection({ clip }: { clip: Clip }) {
               }}
             />
           </div>
+          <details className="rounded-md border border-white/[0.07] bg-white/[0.02] p-2">
+            <summary className="cursor-pointer select-none text-[10px] font-medium text-zinc-300">
+              ปรับ RGB แยกช่องแบบละเอียด
+            </summary>
+            <div className="mt-3 space-y-3">
+              {(
+                [
+                  ["Lift", "lift", -0.25, 0.25],
+                  ["Gamma", "gamma", -0.5, 0.5],
+                  ["Gain", "gain", -0.4, 0.4],
+                ] as const
+              ).map(([label, key, min, max]) => (
+                <div key={key} className="space-y-2 rounded border border-white/[0.05] p-2">
+                  <div className="text-[10px] font-semibold text-zinc-300">{label}</div>
+                  {(["R", "G", "B"] as const).map((channel) => {
+                    const prop = `${key}${channel}` as "liftR" | "liftG" | "liftB" | "gammaR" | "gammaG" | "gammaB" | "gainR" | "gainG" | "gainB";
+                    return (
+                      <RgbSlider
+                        key={prop}
+                        label={channel}
+                        value={p[prop]}
+                        min={min}
+                        max={max}
+                        onBegin={begin}
+                        onChange={(value) => set({ [prop]: value })}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </details>
           <Row label="อุณหภูมิสี" value={p.temp === 0 ? "กลาง" : p.temp > 0 ? `อบอุ่น +${p.temp}` : `เย็น ${p.temp}`}>
             <Slider
               value={[p.temp]}
@@ -700,7 +765,10 @@ function WheelGroup({
           const o = wheelToOffset(a, rad, maxOff);
           onWheel(o.r, o.g, o.b);
         }}
-        onReset={() => onWheel(0, 0, 0)}
+        onReset={() => {
+          begin();
+          onWheel(0, 0, 0);
+        }}
       />
       <span className="text-[9px] font-medium text-zinc-400">{label}</span>
       <Slider
@@ -826,8 +894,7 @@ function CurvesEditor({ clip }: { clip: Clip }) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   const setPoints = (next: CurvePt[]) => {
-    const sorted = [...next].sort((a, b) => a[0] - b[0]);
-    const newCurves: GradeCurves = { ...curves, [channel]: sorted };
+    const newCurves: GradeCurves = { ...curves, [channel]: next };
     useEditor.getState().updateClipProps(clip.id, { curves: newCurves });
   };
 
@@ -857,7 +924,12 @@ function CurvesEditor({ clip }: { clip: Clip }) {
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (activeIdx === null) return;
-    const p = toLocal(e);
+    const [x, y] = toLocal(e);
+    const p: CurvePt = activeIdx === 0
+      ? [0, y]
+      : activeIdx === pts.length - 1
+        ? [1, y]
+        : [Math.min(pts[activeIdx + 1][0] - 0.005, Math.max(pts[activeIdx - 1][0] + 0.005, x)), y];
     const next = pts.map((pt, i) => (i === activeIdx ? p : pt));
     setPoints(next);
   };
@@ -869,8 +941,21 @@ function CurvesEditor({ clip }: { clip: Clip }) {
     const rect = svgRef.current!.getBoundingClientRect();
     const x = Math.min(0.98, Math.max(0.02, (e.clientX - rect.left) / rect.width));
     const y = Math.min(1, Math.max(0, 1 - (e.clientY - rect.top) / rect.height));
+    if (pts.length >= 24) {
+      toast.info("เพิ่มจุดควบคุมได้สูงสุด 24 จุดต่อช่องสี");
+      return;
+    }
+    const sorted = [...pts].sort((a, b) => a[0] - b[0]);
+    const insertionIndex = sorted.findIndex((point) => point[0] > x);
+    const index = insertionIndex < 0 ? sorted.length : insertionIndex;
+    const minX = index > 0 ? sorted[index - 1][0] + 0.005 : 0.005;
+    const maxX = index < sorted.length ? sorted[index][0] - 0.005 : 0.995;
+    if (minX > maxX) return;
+    const point: CurvePt = [Math.min(maxX, Math.max(minX, x)), y];
+    sorted.splice(index, 0, point);
     begin();
-    setPoints([...pts, [x, y]]);
+    setPoints(sorted);
+    setActiveIdx(index);
   };
 
   const chColor = channel === "r" ? "#ff5555" : channel === "g" ? "#4ade80" : channel === "b" ? "#60a5fa" : "#f0f0f0";
@@ -913,6 +998,7 @@ function CurvesEditor({ clip }: { clip: Clip }) {
           className="h-6 w-6 px-0 text-zinc-500 hover:text-zinc-200"
           title="รีเซ็ตช่องนี้"
           onClick={() => {
+            begin();
             const newCurves = { ...curves };
             delete newCurves[channel];
             const hasAny = Object.keys(newCurves).some((k) => newCurves[k as CurveChannel]);
@@ -969,17 +1055,51 @@ function CurvesEditor({ clip }: { clip: Clip }) {
               onPointerDown={(e) => onPointerDown(e, i)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (pts.length > 2) {
+                if (i > 0 && i < pts.length - 1) {
                   begin();
                   setPoints(pts.filter((_, j) => j !== i));
+                  setActiveIdx(null);
                 }
               }}
             />
           ))}
         </svg>
       </div>
+      {activeIdx !== null && pts[activeIdx] && (
+        <div className="mt-2 grid grid-cols-2 gap-3">
+          <Row label="ตำแหน่ง X" value={pts[activeIdx][0].toFixed(3)}>
+            <Slider
+              value={[pts[activeIdx][0]]}
+              min={activeIdx === 0 ? 0 : pts[activeIdx - 1][0] + 0.005}
+              max={activeIdx === pts.length - 1 ? 1 : pts[activeIdx + 1][0] - 0.005}
+              step={0.005}
+              disabled={activeIdx === 0 || activeIdx === pts.length - 1}
+              onPointerDown={begin}
+              onValueChange={([x]) => {
+                const next = [...pts];
+                next[activeIdx] = [x, next[activeIdx][1]];
+                setPoints(next);
+              }}
+            />
+          </Row>
+          <Row label="ตำแหน่ง Y" value={pts[activeIdx][1].toFixed(3)}>
+            <Slider
+              value={[pts[activeIdx][1]]}
+              min={0}
+              max={1}
+              step={0.005}
+              onPointerDown={begin}
+              onValueChange={([y]) => {
+                const next = [...pts];
+                next[activeIdx] = [next[activeIdx][0], y];
+                setPoints(next);
+              }}
+            />
+          </Row>
+        </div>
+      )}
       <p className="mt-1.5 text-[9px] leading-relaxed text-zinc-500">
-        ลากจุดเพื่อปรับโทน · ดับเบิลคลิกพื้นที่ว่าง = เพิ่มจุด · คลิกขวาที่จุด = ลบจุด
+        ลากจุดหรือใช้ X/Y เพื่อปรับละเอียด · ดับเบิลคลิกเพิ่มจุด · คลิกขวาที่จุดกลางเพื่อลบ
       </p>
     </div>
   );
@@ -1196,12 +1316,14 @@ function AudioSection({ clip }: { clip: Clip }) {
 
 function TextSection({ clip }: { clip: Clip }) {
   const p = clip.props;
+  const media = useEditor((s) => s.media);
+  const fonts = media.filter((item) => item.type === "font");
   const set = (patch: Partial<ClipProps>) => useEditor.getState().updateClipProps(clip.id, patch);
   return (
     <Panel
       title="ข้อความ"
       icon={<TypeIcon className="h-3.5 w-3.5 text-amber-400" />}
-      onReset={() => set({ fontSize: 56, color: "#ffffff", fontWeight: 700, textBg: 0, stroke: true })}
+      onReset={() => set({ fontSize: 56, fontFamily: "", color: "#ffffff", fontWeight: 700, textBg: 0, stroke: true })}
     >
       <textarea
         value={p.text}
@@ -1210,6 +1332,22 @@ function TextSection({ clip }: { clip: Clip }) {
         className="w-full resize-none rounded-md border border-white/10 bg-white/[0.05] p-2 text-xs text-zinc-100 outline-none focus:border-fuchsia-400/60"
         placeholder="พิมพ์ข้อความที่นี่…"
       />
+      <Row label="ฟอนต์">
+        <Select
+          value={p.fontFamily || "default"}
+          onValueChange={(value) => set({ fontFamily: value === "default" ? "" : value })}
+        >
+          <SelectTrigger className="h-7 border-white/10 bg-white/[0.05] text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="default">ค่าเริ่มต้น</SelectItem>
+            {fonts.map((font) => (
+              <SelectItem key={font.id} value={font.id}>{font.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Row>
       <Row label="ขนาด" value={`${p.fontSize}px`}>
         <Slider value={[p.fontSize]} min={16} max={180} step={1} onValueChange={([v]) => set({ fontSize: v })} />
       </Row>
@@ -1306,49 +1444,60 @@ function ProjectPanel({ aspect }: { aspect: AspectRatio }) {
           <Separator className="mt-4 bg-white/[0.06]" />
         </section>
 
-        <section className="mb-4">
-          <h3 className="mb-2.5 text-xs font-semibold text-zinc-200">วิธีใช้งานเร็ว ๆ</h3>
-          <ul className="space-y-1.5 text-[11px] leading-relaxed text-zinc-400">
-            <li>1. นำเข้าวิดีโอ/เสียง/รูป ที่แท็บ &ldquo;สื่อ&rdquo; หรือลากไฟล์มาวาง</li>
-            <li>2. ลากสื่อจากคลังลงไทม์ไลน์ หรือกด &ldquo;+ ไทม์ไลน์&rdquo;</li>
-            <li>3. ลากขอบซ้าย-ขวาของคลิปเพื่อตัดสั้น/ยาว</li>
-            <li>4. วางเคอร์เซอร์แล้วกด &ldquo;แบ่ง&rdquo; (S) เพื่อตัดคลิป</li>
-            <li>5. คลิกขวาที่คลิป = เมนูคำสั่งเต็มรูปแบบ</li>
-            <li>6. เกรดสีมืออาชีพที่แท็บ &ldquo;เกรดสี&rdquo; — วีลสี เส้นโค้ง ลุคส์</li>
-            <li>7. กด &ldquo;ส่งออกวิดีโอ&rdquo; ด้านบนเมื่อตัดต่อเสร็จ</li>
-          </ul>
-          <Separator className="mt-4 bg-white/[0.06]" />
-        </section>
+        <section className="mb-4 space-y-2">
+          <details className="group rounded-lg border border-white/[0.07] bg-white/[0.02]">
+            <summary className="cursor-pointer list-none px-2.5 py-2.5 text-xs font-semibold text-zinc-200 marker:hidden">
+              <span className="flex items-center justify-between">
+                วิธีใช้งานเร็ว ๆ
+                <span className="text-zinc-500 transition-transform group-open:rotate-180">⌄</span>
+              </span>
+            </summary>
+            <ul className="space-y-1.5 px-2.5 pb-3 text-[11px] leading-relaxed text-zinc-400">
+              <li>1. นำเข้าวิดีโอ/เสียง/รูป/ฟอนต์ ที่แท็บ &ldquo;สื่อ&rdquo; หรือลากไฟล์มาวาง</li>
+              <li>2. ลากสื่อจากคลังลงไทม์ไลน์ หรือกด &ldquo;+ ไทม์ไลน์&rdquo;</li>
+              <li>3. ลากขอบซ้าย-ขวาของคลิปเพื่อตัดสั้น/ยาว</li>
+              <li>4. วางเคอร์เซอร์แล้วกด &ldquo;แบ่ง&rdquo; (S) เพื่อตัดคลิป</li>
+              <li>5. คลิกขวาที่คลิป = เมนูคำสั่งเต็มรูปแบบ</li>
+              <li>6. เกรดสีมืออาชีพที่แท็บ &ldquo;เกรดสี&rdquo; — วีลสี เส้นโค้ง ลุคส์</li>
+              <li>7. กด &ldquo;ส่งออกวิดีโอ&rdquo; ด้านบนเมื่อตัดต่อเสร็จ</li>
+            </ul>
+          </details>
 
-        <section>
-          <h3 className="mb-2.5 text-xs font-semibold text-zinc-200">คีย์ลัด</h3>
-          <div className="space-y-1.5">
-            {[
-              ["Space", "เล่น / หยุด"],
-              ["S", "แบ่งคลิปที่เคอร์เซอร์"],
-              ["Delete", "ลบคลิปที่เลือก"],
-              ["Ctrl + C / X / V", "คัดลอก / ตัด / วางคลิป"],
-              ["Ctrl + Z / Y", "ย้อน / ทำซ้ำ"],
-              ["Ctrl + D", "ทำสำเนาคลิป"],
-              ["Ctrl + A", "เลือกทุกคลิป"],
-              ["B", "เทียบเกรดสีก่อน/หลัง"],
-              ["F", "ซูมไทม์ไลน์พอดีจอ"],
-              ["Alt + ลาก", "ทำสำเนาแล้วลาก"],
-              ["Ctrl + คลิก", "เลือกหลายคลิป"],
-              ["← / →", "เลื่อน 1 เฟรม (Shift = 1 วิ)"],
-              ["+ / -", "ซูมไทม์ไลน์"],
-              ["Ctrl + ล้อเมาส์", "ซูมไทม์ไลน์นุ่มนวล"],
-              ["Home / End", "ไปต้น / ท้าย"],
-              ["Esc", "ยกเลิกการเลือก"],
-            ].map(([k, d]) => (
-              <div key={k} className="flex items-center justify-between text-[11px]">
-                <span className="text-zinc-400">{d}</span>
-                <kbd className="rounded border border-white/10 bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
-                  {k}
-                </kbd>
-              </div>
-            ))}
-          </div>
+          <details className="group rounded-lg border border-white/[0.07] bg-white/[0.02]">
+            <summary className="cursor-pointer list-none px-2.5 py-2.5 text-xs font-semibold text-zinc-200 marker:hidden">
+              <span className="flex items-center justify-between">
+                คีย์ลัด
+                <span className="text-zinc-500 transition-transform group-open:rotate-180">⌄</span>
+              </span>
+            </summary>
+            <div className="space-y-1.5 px-2.5 pb-3">
+              {[
+                ["Space", "เล่น / หยุด"],
+                ["S", "แบ่งคลิปที่เคอร์เซอร์"],
+                ["Delete", "ลบคลิปที่เลือก"],
+                ["Ctrl + C / X / V", "คัดลอก / ตัด / วางคลิป"],
+                ["Ctrl + Z / Y", "ย้อน / ทำซ้ำ"],
+                ["Ctrl + D", "ทำสำเนาคลิป"],
+                ["Ctrl + A", "เลือกทุกคลิป"],
+                ["B", "เทียบเกรดสีก่อน/หลัง"],
+                ["F", "ซูมไทม์ไลน์พอดีจอ"],
+                ["Alt + ลาก", "ทำสำเนาแล้วลาก"],
+                ["Ctrl + คลิก", "เลือกหลายคลิป"],
+                ["← / →", "เลื่อน 1 เฟรม (Shift = 1 วิ)"],
+                ["+ / -", "ซูมไทม์ไลน์"],
+                ["Ctrl + ล้อเมาส์", "ซูมไทม์ไลน์นุ่มนวล"],
+                ["Home / End", "ไปต้น / ท้าย"],
+                ["Esc", "ยกเลิกการเลือก"],
+              ].map(([k, d]) => (
+                <div key={k} className="flex items-center justify-between text-[11px]">
+                  <span className="text-zinc-400">{d}</span>
+                  <kbd className="rounded border border-white/10 bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
+                    {k}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+          </details>
         </section>
 
         <button

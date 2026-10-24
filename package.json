@@ -1,11 +1,17 @@
 {
   "name": "nextjs_tailwind_shadcn_ts",
-  "version": "0.2.1",
+  "version": "0.2.3",
+  "releaseDate": "2026-10-23",
+  "description": "A professional desktop video editor with local project storage.",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
+    "dev": "next dev -p 3000",
+    "build": "next build && node scripts/create-app-icon.mjs && node scripts/prepare-standalone.mjs",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:installer": "npm run build && electron-builder --win nsis --x64",
+    "desktop:publish": "npm run desktop:installer && node scripts/stage-installer.mjs",
+    "desktop:dir": "npm run build && electron-builder --dir --win --x64",
     "lint": "eslint .",
     "db:push": "prisma db push --accept-data-loss",
     "db:generate": "prisma generate",
@@ -86,10 +92,60 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "bun-types": "^1.3.4",
+    "electron": "^37.10.3",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "^16.1.1",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.cutpro.studio",
+    "productName": "CutPro Studio",
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      ".next/standalone/**"
+    ],
+    "files": [
+      "electron/**/*",
+      ".next/standalone/**/*",
+      "!.next/standalone/public/download/*.exe",
+      "!.next/standalone/public/download/*.blockmap"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "public/icons"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icons/app.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CutPro Studio",
+      "runAfterFinish": true
+    },
+    "electronFuses": {
+      "runAsNode": true,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "artifactName": "CutPro-Studio-Setup-${version}-${arch}.${ext}"
   }
 }

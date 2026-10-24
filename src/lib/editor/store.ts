@@ -69,6 +69,7 @@ export interface EditorState {
   selectMany: (ids: string[]) => void;
   setCompare: (v: boolean) => void;
   clearProject: () => void;
+  newProject: () => void;
 
   // history
   pushHistory: () => void;
@@ -601,6 +602,22 @@ export const useEditor = create<EditorState>((set, get) => ({
     s.pushHistory();
     set({ clips: [], media: [], selectedIds: [], selectedClipId: null, playhead: 0, playing: false });
   },
+  newProject: () =>
+    set({
+      media: [],
+      tracks: defaultTracks(),
+      clips: [],
+      selectedIds: [],
+      selectedClipId: null,
+      playhead: 0,
+      playing: false,
+      pxPerSec: 60,
+      snapping: true,
+      aspect: "16:9",
+      compare: false,
+      past: [],
+      future: [],
+    }),
 }));
 
 /** Snap helper bound to current store settings */
